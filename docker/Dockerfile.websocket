@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir websockets
+
+COPY tests/test_websocket_server.py .
+
+EXPOSE 8765
+
+CMD ["python", "test_websocket_server.py"]

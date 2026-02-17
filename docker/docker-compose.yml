@@ -1,0 +1,76 @@
+# Docker Compose for IoT Device Simulator Test Infrastructure
+#
+# This provides complete test infrastructure for all supported protocols:
+#   - MQTT (Mosquitto broker on port 1883)
+#   - HTTP (Test server on port 8080)
+#   - WebSocket (Test server on port 8765)
+#   - CoAP (Test server on port 5683/udp)
+#
+# Quick Start:
+#   make servers-up     # Start all test servers
+#   make run            # Run the simulator (in another terminal)
+#   make servers-logs   # View server logs
+#   make servers-down   # Stop all servers
+#
+# Individual Services:
+#   make mqtt-up        # Start only MQTT broker
+#   make http-up        # Start only HTTP server
+#   make ws-up          # Start only WebSocket server
+#   make coap-up        # Start only CoAP server
+
+services:
+  # Mosquitto MQTT Broker for testing
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: iot-mqtt-broker
+    ports:
+      - "1883:1883"  # MQTT
+      - "9001:9001"  # MQTT over WebSocket
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    restart: unless-stopped
+    networks:
+      - iot-network
+
+  # HTTP test server
+  http-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.http
+    container_name: iot-http-server
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    networks:
+      - iot-network
+
+  # WebSocket test server
+  websocket-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.websocket
+    container_name: iot-websocket-server
+    ports:
+      - "8765:8765"
+    restart: unless-stopped
+    networks:
+      - iot-network
+
+  # CoAP test server
+  coap-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.coap
+    container_name: iot-coap-server
+    ports:
+      - "5683:5683/udp"
+    restart: unless-stopped
+    networks:
+      - iot-network
+
+networks:
+  iot-network:
+    driver: bridge
+

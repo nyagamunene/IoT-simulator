@@ -1,0 +1,12 @@
+# Core dependencies
+paho-mqtt>=1.6.1          # MQTT protocol support
+requests>=2.31.0          # HTTP protocol support
+websocket-client>=1.6.1   # WebSocket protocol support
+aiocoap>=0.4.5            # CoAP protocol support
+
+# Test server dependencies
+websockets>=12.0          # WebSocket test server
+
+# Optional dependencies for additional features
+# cryptography>=41.0.0    # For secure connections (TLS/SSL)
+# certifi>=2023.7.22      # For certificate verification
