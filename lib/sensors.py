@@ -120,6 +120,15 @@ class WindSpeedReading(SensorReading):
     unit: str = "m/s"
 
 
+@dataclass
+class FuelConsumptionReading(SensorReading):
+    """Fuel consumption sensor data"""
+    consumption_rate: float  # L/h or L/100km
+    fuel_level: float  # percentage (0-100)
+    total_consumed: float  # total liters consumed
+    unit: str = "L/h"
+
+
 # ==================== Data Generators ====================
 
 class DataGenerator:
@@ -412,4 +421,38 @@ class WindSpeedGenerator(DataGenerator):
             device_id=self.device_id,
             speed=round(self.current_speed, 2),
             direction=round(self.current_direction, 1)
+        )
+
+
+class FuelConsumptionGenerator(DataGenerator):
+    """Generates realistic fuel consumption data"""
+    
+    def __init__(self, device_id: str, tank_capacity: float = 50.0):
+        super().__init__(device_id)
+        self.fuel_level = random.uniform(30, 100)  # Start with 30-100% fuel
+        self.total_consumed = 0.0
+        self.consumption_rate = random.uniform(5.0, 15.0)  # L/h
+        self.tank_capacity = tank_capacity
+    
+    def generate(self) -> FuelConsumptionReading:
+        # Simulate consumption rate changes (engine load variation)
+        self.consumption_rate += random.uniform(-1.0, 1.0)
+        self.consumption_rate = max(3.0, min(25.0, self.consumption_rate))
+        
+        # Calculate fuel consumed since last reading (assuming 5 second intervals)
+        interval_hours = 5.0 / 3600.0  # 5 seconds in hours
+        consumed_this_interval = self.consumption_rate * interval_hours
+        
+        # Update total and fuel level
+        self.total_consumed += consumed_this_interval
+        fuel_consumed_liters = consumed_this_interval
+        fuel_level_decrease = (fuel_consumed_liters / self.tank_capacity) * 100
+        self.fuel_level = max(0, self.fuel_level - fuel_level_decrease)
+        
+        return FuelConsumptionReading(
+            timestamp=time.time(),
+            device_id=self.device_id,
+            consumption_rate=round(self.consumption_rate, 2),
+            fuel_level=round(self.fuel_level, 1),
+            total_consumed=round(self.total_consumed, 3)
         )

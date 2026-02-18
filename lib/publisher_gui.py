@@ -28,7 +28,7 @@ from lib.sensors import (
     LocationGenerator, TemperatureGenerator, PressureGenerator,
     HumidityGenerator, AccelerometerGenerator, GyroscopeGenerator, CO2Generator,
     FlowGenerator, SoilMoistureGenerator, SoilPHGenerator,
-    LightIntensityGenerator, RainGenerator, WindSpeedGenerator
+    LightIntensityGenerator, RainGenerator, WindSpeedGenerator, FuelConsumptionGenerator
 )
 
 
@@ -317,7 +317,8 @@ class SimulatorGUI:
             ("🧪 Soil pH", "soil_ph"),
             ("💡 Light Intensity", "light"),
             ("🌧️  Rain", "rain"),
-            ("💨 Wind Speed", "wind")
+            ("💨 Wind Speed", "wind"),
+            ("⛽ Fuel Consumption", "fuel")
         ]
         
         for i, (label, key) in enumerate(sensors):
@@ -668,6 +669,8 @@ class SimulatorGUI:
                 self.simulator.add_generator('rain', RainGenerator(device_id))
             if self.sensor_vars['wind'].get():
                 self.simulator.add_generator('wind', WindSpeedGenerator(device_id))
+            if self.sensor_vars['fuel'].get():
+                self.simulator.add_generator('fuel', FuelConsumptionGenerator(device_id))
             
             if not any(var.get() for var in self.sensor_vars.values()):
                 messagebox.showerror("Error", "Please select at least one sensor")
