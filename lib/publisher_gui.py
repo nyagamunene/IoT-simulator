@@ -1022,24 +1022,30 @@ class SimulatorGUI:
             
             # Protocol-specific settings
             protocol = self.protocol_var.get()
-            if protocol == "MQTT":
+            if protocol == "MQTT" and hasattr(self, 'mqtt_broker_var'):
                 config['mqtt'] = {
                     'broker': self.mqtt_broker_var.get(),
                     'port': self.mqtt_port_var.get(),
                     'topic': self.mqtt_topic_var.get()
                 }
-            elif protocol == "HTTP":
+            elif protocol == "HTTP" and hasattr(self, 'http_host_var'):
                 config['http'] = {
-                    'url': self.http_url_var.get(),
+                    'host': self.http_host_var.get(),
+                    'port': self.http_port_var.get(),
+                    'topic': self.http_topic_var.get(),
                     'method': self.http_method_var.get()
                 }
-            elif protocol == "WebSocket":
+            elif protocol == "WebSocket" and hasattr(self, 'ws_host_var'):
                 config['websocket'] = {
-                    'url': self.websocket_url_var.get()
+                    'host': self.ws_host_var.get(),
+                    'port': self.ws_port_var.get(),
+                    'topic': self.ws_topic_var.get()
                 }
-            elif protocol == "CoAP":
+            elif protocol == "CoAP" and hasattr(self, 'coap_host_var'):
                 config['coap'] = {
-                    'url': self.coap_url_var.get()
+                    'host': self.coap_host_var.get(),
+                    'port': self.coap_port_var.get(),
+                    'topic': self.coap_topic_var.get()
                 }
             
             # Save to file
@@ -1088,8 +1094,11 @@ class SimulatorGUI:
                     if key in self.sensor_vars:
                         self.sensor_vars[key].set(value)
             
-            # Restore protocol-specific settings
+            # Refresh protocol settings UI BEFORE restoring values
             protocol = config.get('protocol', 'MQTT')
+            self._create_protocol_settings()
+            
+            # Restore protocol-specific settings AFTER creating the widgets
             if protocol == "MQTT" and 'mqtt' in config:
                 if hasattr(self, 'mqtt_broker_var'):
                     self.mqtt_broker_var.set(config['mqtt'].get('broker', ''))
@@ -1098,19 +1107,28 @@ class SimulatorGUI:
                 if hasattr(self, 'mqtt_topic_var'):
                     self.mqtt_topic_var.set(config['mqtt'].get('topic', ''))
             elif protocol == "HTTP" and 'http' in config:
-                if hasattr(self, 'http_url_var'):
-                    self.http_url_var.set(config['http'].get('url', ''))
+                if hasattr(self, 'http_host_var'):
+                    self.http_host_var.set(config['http'].get('host', ''))
+                if hasattr(self, 'http_port_var'):
+                    self.http_port_var.set(config['http'].get('port', ''))
+                if hasattr(self, 'http_topic_var'):
+                    self.http_topic_var.set(config['http'].get('topic', ''))
                 if hasattr(self, 'http_method_var'):
                     self.http_method_var.set(config['http'].get('method', ''))
             elif protocol == "WebSocket" and 'websocket' in config:
-                if hasattr(self, 'websocket_url_var'):
-                    self.websocket_url_var.set(config['websocket'].get('url', ''))
+                if hasattr(self, 'ws_host_var'):
+                    self.ws_host_var.set(config['websocket'].get('host', ''))
+                if hasattr(self, 'ws_port_var'):
+                    self.ws_port_var.set(config['websocket'].get('port', ''))
+                if hasattr(self, 'ws_topic_var'):
+                    self.ws_topic_var.set(config['websocket'].get('topic', ''))
             elif protocol == "CoAP" and 'coap' in config:
-                if hasattr(self, 'coap_url_var'):
-                    self.coap_url_var.set(config['coap'].get('url', ''))
-            
-            # Refresh protocol settings UI
-            self._create_protocol_settings()
+                if hasattr(self, 'coap_host_var'):
+                    self.coap_host_var.set(config['coap'].get('host', ''))
+                if hasattr(self, 'coap_port_var'):
+                    self.coap_port_var.set(config['coap'].get('port', ''))
+                if hasattr(self, 'coap_topic_var'):
+                    self.coap_topic_var.set(config['coap'].get('topic', ''))
             
         except Exception as e:
             # Silently fail - use defaults if config can't be loaded
