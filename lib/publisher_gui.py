@@ -26,7 +26,7 @@ except ImportError:
 # Import sensor generators
 from lib.sensors import (
     LocationGenerator, TemperatureGenerator, PressureGenerator,
-    HumidityGenerator, AccelerometerGenerator, CO2Generator,
+    HumidityGenerator, AccelerometerGenerator, GyroscopeGenerator, CO2Generator,
     FlowGenerator, SoilMoistureGenerator, SoilPHGenerator,
     LightIntensityGenerator, RainGenerator, WindSpeedGenerator
 )
@@ -292,6 +292,7 @@ class SimulatorGUI:
             ("💨 Pressure", "pressure"),
             ("💧 Humidity", "humidity"),
             ("📊 Accelerometer", "accelerometer"),
+            ("🔄 Gyroscope", "gyroscope"),
             ("🌫️  CO2 (PPM)", "co2"),
             ("🚰 Flow Rate", "flow"),
             ("🌱 Soil Moisture", "soil_moisture"),
@@ -633,6 +634,8 @@ class SimulatorGUI:
                 self.simulator.add_generator('humidity', HumidityGenerator(device_id))
             if self.sensor_vars['accelerometer'].get():
                 self.simulator.add_generator('accelerometer', AccelerometerGenerator(device_id))
+            if self.sensor_vars['gyroscope'].get():
+                self.simulator.add_generator('gyroscope', GyroscopeGenerator(device_id))
             if self.sensor_vars['co2'].get():
                 self.simulator.add_generator('co2', CO2Generator(device_id))
             if self.sensor_vars['flow'].get():

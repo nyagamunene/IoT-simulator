@@ -61,6 +61,15 @@ class AccelerometerReading(SensorReading):
 
 
 @dataclass
+class GyroscopeReading(SensorReading):
+    """Gyroscope data (angular velocity)"""
+    x: float
+    y: float
+    z: float
+    unit: str = "deg/s"
+
+
+@dataclass
 class CO2Reading(SensorReading):
     """CO2 sensor data (PPM)"""
     co2_ppm: float
@@ -222,6 +231,35 @@ class AccelerometerGenerator(DataGenerator):
             x=round(random.uniform(-10, 10), 3),
             y=round(random.uniform(-10, 10), 3),
             z=round(random.uniform(-10, 10), 3)
+        )
+
+
+class GyroscopeGenerator(DataGenerator):
+    """Generates realistic gyroscope data (angular velocity)"""
+    
+    def __init__(self, device_id: str):
+        super().__init__(device_id)
+        self.x_rate = 0.0
+        self.y_rate = 0.0
+        self.z_rate = 0.0
+    
+    def generate(self) -> GyroscopeReading:
+        # Simulate angular velocity changes (typical range -250 to 250 deg/s)
+        self.x_rate += random.uniform(-5, 5)
+        self.y_rate += random.uniform(-5, 5)
+        self.z_rate += random.uniform(-5, 5)
+        
+        # Clamp to realistic range
+        self.x_rate = max(-250, min(250, self.x_rate))
+        self.y_rate = max(-250, min(250, self.y_rate))
+        self.z_rate = max(-250, min(250, self.z_rate))
+        
+        return GyroscopeReading(
+            timestamp=time.time(),
+            device_id=self.device_id,
+            x=round(self.x_rate, 3),
+            y=round(self.y_rate, 3),
+            z=round(self.z_rate, 3)
         )
 
 

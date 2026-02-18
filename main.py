@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Import sensor classes
 from lib.sensors import (
     SensorReading, LocationReading, TemperatureReading, PressureReading,
-    HumidityReading, AccelerometerReading, CO2Reading, FlowReading,
+    HumidityReading, AccelerometerReading, GyroscopeReading, CO2Reading, FlowReading,
     SoilMoistureReading, SoilPHReading, LightIntensityReading,
     RainReading, WindSpeedReading, DataGenerator
 )
