@@ -6,7 +6,6 @@ Receives and displays data sent from the simulator
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
-from datetime import datetime
 
 
 class IoTDataHandler(BaseHTTPRequestHandler):
@@ -30,13 +29,10 @@ class IoTDataHandler(BaseHTTPRequestHandler):
             body = self.rfile.read(content_length)
             data = json.loads(body.decode('utf-8'))
             
-            # Pretty print the received data
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            print(f"\n{'='*60}")
-            print(f"[{timestamp}] Received Data from {self.client_address[0]}")
-            print(f"{'='*60}")
+            # Print received data
+            print(f"\n{self.command} {self.path}")
             print(json.dumps(data, indent=2))
-            print(f"{'='*60}\n")
+            print()
             
             # Send success response
             self.send_response(200)

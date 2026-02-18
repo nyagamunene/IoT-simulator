@@ -10,7 +10,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/  # Commented out - we use lib/ for our source code
 lib64/
 parts/
 sdist/
@@ -50,9 +50,10 @@ docker/mosquitto/log/
 .coverage
 htmlcov/
 
-# Environment variables
-.env
+# Environment variables (but allow docker/.env with default values)
+/.env
 .env.local
+*.env.local
 
 # Docker
 .dockerignore

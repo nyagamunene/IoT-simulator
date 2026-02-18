@@ -1,10 +1,14 @@
 # Docker Compose for IoT Device Simulator Test Infrastructure
 #
 # This provides complete test infrastructure for all supported protocols:
-#   - MQTT (Mosquitto broker on port 1883)
-#   - HTTP (Test server on port 8080)
-#   - WebSocket (Test server on port 8765)
-#   - CoAP (Test server on port 5683/udp)
+#   - MQTT (Mosquitto broker on port ${MQTT_PORT})
+#   - HTTP (Test server on port ${HTTP_PORT})
+#   - WebSocket (Test server on port ${WEBSOCKET_PORT})
+#   - CoAP (Test server on port ${COAP_PORT}/udp)
+#
+# Port Configuration:
+#   Ports are configured in the .env file in this directory.
+#   You can override them by copying .env to .env.local and modifying values.
 #
 # Quick Start:
 #   make servers-up     # Start all test servers
@@ -24,13 +28,18 @@ services:
     image: eclipse-mosquitto:latest
     container_name: iot-mqtt-broker
     ports:
-      - "1883:1883"  # MQTT
-      - "9001:9001"  # MQTT over WebSocket
+      - "${MQTT_PORT}:1883"  # MQTT
+      - "${MQTT_WS_PORT}:9001"  # MQTT over WebSocket
     volumes:
       - ./mosquitto/config:/mosquitto/config
       - ./mosquitto/data:/mosquitto/data
       - ./mosquitto/log:/mosquitto/log
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - iot-network
 
@@ -41,8 +50,13 @@ services:
       dockerfile: docker/Dockerfile.http
     container_name: iot-http-server
     ports:
-      - "8080:8080"
+      - "${HTTP_PORT}:8080"
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - iot-network
 
@@ -53,8 +67,13 @@ services:
       dockerfile: docker/Dockerfile.websocket
     container_name: iot-websocket-server
     ports:
-      - "8765:8765"
+      - "${WEBSOCKET_PORT}:8765"
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - iot-network
 
@@ -65,12 +84,16 @@ services:
       dockerfile: docker/Dockerfile.coap
     container_name: iot-coap-server
     ports:
-      - "5683:5683/udp"
+      - "${COAP_PORT}:5683/udp"
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - iot-network
 
 networks:
   iot-network:
     driver: bridge
-

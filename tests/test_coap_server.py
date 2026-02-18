@@ -8,17 +8,15 @@ import asyncio
 import aiocoap.resource as resource
 import aiocoap
 import json
-from datetime import datetime
 
 class DataResource(resource.Resource):
     """CoAP resource that receives and displays data"""
     
     async def render_post(self, request):
         """Handle POST requests"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         payload = request.payload.decode('utf-8')
         
-        print(f"\n[{timestamp}] Received CoAP POST:")
+        print("\nReceived POST:")
         
         # Try to parse as JSON for pretty printing
         try:
@@ -27,16 +25,15 @@ class DataResource(resource.Resource):
         except json.JSONDecodeError:
             print(payload)
         
-        print("─" * 60)
+        print()
         
         return aiocoap.Message(code=aiocoap.CHANGED, payload=b"Data received")
     
     async def render_put(self, request):
         """Handle PUT requests"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         payload = request.payload.decode('utf-8')
         
-        print(f"\n[{timestamp}] Received CoAP PUT:")
+        print("\nReceived PUT:")
         
         # Try to parse as JSON for pretty printing
         try:
@@ -45,7 +42,7 @@ class DataResource(resource.Resource):
         except json.JSONDecodeError:
             print(payload)
         
-        print("─" * 60)
+        print()
         
         return aiocoap.Message(code=aiocoap.CHANGED, payload=b"Data updated")
 

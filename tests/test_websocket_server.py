@@ -7,31 +7,25 @@ Receives and displays WebSocket messages
 import asyncio
 import websockets
 import json
-from datetime import datetime
 
 async def handle_message(websocket, path):
     """Handle incoming WebSocket messages"""
-    client_address = websocket.remote_address
-    print(f"✓ New connection from {client_address[0]}:{client_address[1]}")
-    
     try:
         async for message in websocket:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
             # Try to parse as JSON for pretty printing
             try:
                 data = json.loads(message)
-                print(f"\n[{timestamp}] Received from {client_address[0]}:")
+                print("\nReceived:")
                 print(json.dumps(data, indent=2))
+                print()
             except json.JSONDecodeError:
-                print(f"\n[{timestamp}] Received from {client_address[0]}:")
-                print(message)
+                print(f"\nReceived: {message}\n")
             
             # Send acknowledgment
-            await websocket.send(json.dumps({"status": "received", "timestamp": timestamp}))
+            await websocket.send(json.dumps({"status": "received"}))
             
     except websockets.exceptions.ConnectionClosed:
-        print(f"✗ Connection closed from {client_address[0]}:{client_address[1]}")
+        pass
 
 async def main():
     host = "0.0.0.0"
