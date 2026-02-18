@@ -953,19 +953,18 @@ class SimulatorGUI:
             return
         
         try:
-            # Pattern to extract sensor values from SenML format
-            # Example: {"n":"temperature","u":"Cel","v":22.5,...}
             import json
             
-            # Try to find JSON in the message
-            if '[{' in message and '}]' in message:
-                # Extract JSON array
-                start = message.find('[{')
-                end = message.find('}]') + 2
-                json_str = message[start:end]
+            # Try to find JSON in the message (after "Sent: ")
+            if 'Sent: ' in message:
+                # Extract everything after "Sent: "
+                json_start = message.find('Sent: ') + 6
+                json_str = message[json_start:].strip()
                 
                 try:
                     data = json.loads(json_str)
+                    
+                    # Handle SenML format (array of objects)
                     if isinstance(data, list):
                         for item in data:
                             if isinstance(item, dict) and 'n' in item and 'v' in item:
@@ -973,6 +972,18 @@ class SimulatorGUI:
                                 value = item['v']
                                 if isinstance(value, (int, float)):
                                     self.sensor_chart.add_data_point(sensor_name, value)
+                    
+                    # Handle regular JSON format (object with sensor names as keys)
+                    elif isinstance(data, dict):
+                        for sensor_name, sensor_data in data.items():
+                            if isinstance(sensor_data, dict) and 'value' in sensor_data:
+                                value = sensor_data['value']
+                                if isinstance(value, (int, float)):
+                                    self.sensor_chart.add_data_point(sensor_name, value)
+                            elif isinstance(sensor_data, (int, float)):
+                                # Direct value
+                                self.sensor_chart.add_data_point(sensor_name, sensor_data)
+                                
                 except json.JSONDecodeError:
                     pass
         except Exception:

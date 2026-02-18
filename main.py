@@ -700,8 +700,9 @@ class IoTDeviceSimulator:
                 logger.info(f"→ Sending data via {type(self.protocol_handler).__name__}...")
                 self.protocol_handler.send(payload)
                 
-                # Log to queue
-                self.message_queue.put(f"[{datetime.now().strftime('%H:%M:%S')}] Sent: {len(payload)} bytes")
+                # Log to queue with actual payload for dashboard charting
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                self.message_queue.put(f"[{timestamp}] Sent: {payload}")
                 logger.info(f"✓ Data sent successfully")
                 
             except Exception as e:
