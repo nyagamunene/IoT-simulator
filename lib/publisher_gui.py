@@ -9,6 +9,9 @@ import queue
 from typing import Dict, Any
 import re
 from collections import deque
+import json
+import os
+from pathlib import Path
 
 # Matplotlib for charts
 try:
@@ -170,6 +173,8 @@ class SensorDataChart(ttk.Frame):
 class SimulatorGUI:
     """GUI for IoT Device Simulator"""
     
+    CONFIG_FILE = Path.home() / ".iot_simulator_config.json"
+    
     def __init__(self, root, simulator_class):
         self.root = root
         self.root.title("IoT Device Simulator - Publisher")
@@ -182,6 +187,11 @@ class SimulatorGUI:
         
         self._create_menu()
         self._create_widgets()
+        self._load_config()
+        self._setup_auto_save()
+        
+        # Save config on window close
+        self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
     
     def _create_menu(self):
         """Create menu bar"""
@@ -499,6 +509,7 @@ class SimulatorGUI:
     
     def _on_protocol_change(self, event=None):
         self._create_protocol_settings()
+        self._save_config()
     
     def _on_tls_mode_change(self):
         """Handle TLS mode selection changes"""
@@ -515,6 +526,9 @@ class SimulatorGUI:
             # Show all certificate fields (CA cert, client cert, and client key)
             self.tls_cert_frame.grid()
             self._show_client_cert_fields()
+        
+        # Save config when TLS mode changes
+        self._save_config()
     
     def _hide_client_cert_fields(self):
         """Hide client certificate and key fields (for TLS mode)"""
@@ -945,4 +959,149 @@ class SimulatorGUI:
         except Exception:
             # Silently ignore parsing errors
             pass
+    
+    def _setup_auto_save(self):
+        """Setup auto-save traces on important variables"""
+        def save_callback(*args):
+            # Use after_idle to debounce multiple rapid changes
+            if hasattr(self, '_save_job'):
+                self.root.after_cancel(self._save_job)
+            self._save_job = self.root.after(1000, self._save_config)  # Save after 1 second of no changes
+        
+        # Add traces to important variables
+        self.device_id_var.trace_add('write', save_callback)
+        self.interval_var.trace_add('write', save_callback)
+        self.username_var.trace_add('write', save_callback)
+        self.password_var.trace_add('write', save_callback)
+        self.protocol_var.trace_add('write', save_callback)
+        self.format_var.trace_add('write', save_callback)
+        
+        # Add traces to sensor checkboxes
+        for var in self.sensor_vars.values():
+            var.trace_add('write', save_callback)
+    
+    def _save_config(self):
+        """Save current configuration to file"""
+        try:
+            config = {
+                'device_id': self.device_id_var.get(),
+                'interval': self.interval_var.get(),
+                'username': self.username_var.get(),
+                'password': self.password_var.get(),
+                'protocol': self.protocol_var.get(),
+                'format': self.format_var.get(),
+                'tls_mode': self.tls_mode_var.get(),
+                'ca_cert': self.ca_cert_var.get(),
+                'client_cert': self.client_cert_var.get(),
+                'client_key': self.client_key_var.get(),
+                'sensors': {key: var.get() for key, var in self.sensor_vars.items()}
+            }
+            
+            # Protocol-specific settings
+            protocol = self.protocol_var.get()
+            if protocol == "MQTT":
+                config['mqtt'] = {
+                    'broker': self.mqtt_broker_var.get(),
+                    'port': self.mqtt_port_var.get(),
+                    'topic': self.mqtt_topic_var.get()
+                }
+            elif protocol == "HTTP":
+                config['http'] = {
+                    'url': self.http_url_var.get(),
+                    'method': self.http_method_var.get()
+                }
+            elif protocol == "WebSocket":
+                config['websocket'] = {
+                    'url': self.websocket_url_var.get()
+                }
+            elif protocol == "CoAP":
+                config['coap'] = {
+                    'url': self.coap_url_var.get()
+                }
+            
+            # Save to file
+            with open(self.CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=2)
+            
+        except Exception as e:
+            # Silently fail - don't interrupt user workflow
+            print(f"Warning: Could not save config: {e}")
+    
+    def _load_config(self):
+        """Load configuration from file"""
+        try:
+            if not self.CONFIG_FILE.exists():
+                return
+            
+            with open(self.CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+            
+            # Restore basic settings
+            if 'device_id' in config:
+                self.device_id_var.set(config['device_id'])
+            if 'interval' in config:
+                self.interval_var.set(config['interval'])
+            if 'username' in config:
+                self.username_var.set(config['username'])
+            if 'password' in config:
+                self.password_var.set(config['password'])
+            if 'protocol' in config:
+                self.protocol_var.set(config['protocol'])
+            if 'format' in config:
+                self.format_var.set(config['format'])
+            if 'tls_mode' in config:
+                self.tls_mode_var.set(config['tls_mode'])
+                self._on_tls_mode_change()
+            if 'ca_cert' in config:
+                self.ca_cert_var.set(config['ca_cert'])
+            if 'client_cert' in config:
+                self.client_cert_var.set(config['client_cert'])
+            if 'client_key' in config:
+                self.client_key_var.set(config['client_key'])
+            
+            # Restore sensor selections
+            if 'sensors' in config:
+                for key, value in config['sensors'].items():
+                    if key in self.sensor_vars:
+                        self.sensor_vars[key].set(value)
+            
+            # Restore protocol-specific settings
+            protocol = config.get('protocol', 'MQTT')
+            if protocol == "MQTT" and 'mqtt' in config:
+                if hasattr(self, 'mqtt_broker_var'):
+                    self.mqtt_broker_var.set(config['mqtt'].get('broker', ''))
+                if hasattr(self, 'mqtt_port_var'):
+                    self.mqtt_port_var.set(config['mqtt'].get('port', ''))
+                if hasattr(self, 'mqtt_topic_var'):
+                    self.mqtt_topic_var.set(config['mqtt'].get('topic', ''))
+            elif protocol == "HTTP" and 'http' in config:
+                if hasattr(self, 'http_url_var'):
+                    self.http_url_var.set(config['http'].get('url', ''))
+                if hasattr(self, 'http_method_var'):
+                    self.http_method_var.set(config['http'].get('method', ''))
+            elif protocol == "WebSocket" and 'websocket' in config:
+                if hasattr(self, 'websocket_url_var'):
+                    self.websocket_url_var.set(config['websocket'].get('url', ''))
+            elif protocol == "CoAP" and 'coap' in config:
+                if hasattr(self, 'coap_url_var'):
+                    self.coap_url_var.set(config['coap'].get('url', ''))
+            
+            # Refresh protocol settings UI
+            self._create_protocol_settings()
+            
+        except Exception as e:
+            # Silently fail - use defaults if config can't be loaded
+            print(f"Warning: Could not load config: {e}")
+    
+    def _on_closing(self):
+        """Handle window close event"""
+        # Save configuration
+        self._save_config()
+        
+        # Stop simulation if running
+        if self.simulator:
+            self._stop_simulation()
+        
+        # Close window
+        self.root.destroy()
 
