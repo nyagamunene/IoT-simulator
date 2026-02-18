@@ -87,6 +87,7 @@ class MQTTSubscriberGUI:
         self._create_menu()
         self._create_widgets()
         self._load_config()
+        self._setup_auto_save()
         
         # Save config on window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -892,6 +893,29 @@ class MQTTSubscriberGUI:
                 self.topics_text.insert('1.0', config['topics'])
         except Exception as e:
             print(f"Warning: Could not load config: {e}")
+    
+    def _setup_auto_save(self):
+        """Setup auto-save traces on important variables"""
+        def save_callback(*args):
+            # Use after_idle to debounce multiple rapid changes
+            if hasattr(self, '_save_job'):
+                self.root.after_cancel(self._save_job)
+            self._save_job = self.root.after(1000, self._save_config)  # Save after 1 second of no changes
+        
+        # Add traces to all StringVar fields
+        self.broker_var.trace_add('write', save_callback)
+        self.port_var.trace_add('write', save_callback)
+        self.client_id_var.trace_add('write', save_callback)
+        self.username_var.trace_add('write', save_callback)
+        self.password_var.trace_add('write', save_callback)
+        self.use_tls_var.trace_add('write', save_callback)
+        self.ca_cert_var.trace_add('write', save_callback)
+        
+        # Bind to topics text widget for auto-save on changes
+        def on_topics_change(event=None):
+            save_callback()
+        
+        self.topics_text.bind('<KeyRelease>', on_topics_change)
     
     def _on_closing(self):
         """Handle window close event"""

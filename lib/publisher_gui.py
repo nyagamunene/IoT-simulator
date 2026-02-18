@@ -450,61 +450,80 @@ class SimulatorGUI:
         
         protocol = self.protocol_var.get()
         
+        # Auto-save callback for protocol-specific variables
+        def save_callback(*args):
+            if hasattr(self, '_save_job'):
+                self.root.after_cancel(self._save_job)
+            self._save_job = self.root.after(1000, self._save_config)
+        
         if protocol == "MQTT":
             ttk.Label(self.protocol_settings_frame, text="Broker:").grid(row=0, column=0, sticky=tk.W, pady=2)
             self.mqtt_broker_var = tk.StringVar(value="messaging.magistrala.absmach.eu")
+            self.mqtt_broker_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.mqtt_broker_var, width=20).grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
             
             ttk.Label(self.protocol_settings_frame, text="Port:").grid(row=1, column=0, sticky=tk.W, pady=2)
             self.mqtt_port_var = tk.StringVar(value="8883")
+            self.mqtt_port_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.mqtt_port_var, width=20).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2)
             
             ttk.Label(self.protocol_settings_frame, text="Topic:").grid(row=2, column=0, sticky=tk.W, pady=2)
             self.mqtt_topic_var = tk.StringVar(value="m/{{DOMAINID}}/c/{{CHANNELID}}/subtopic")
+            self.mqtt_topic_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.mqtt_topic_var, width=20).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=2)
         
         elif protocol == "HTTP":
             ttk.Label(self.protocol_settings_frame, text="Host:").grid(row=0, column=0, sticky=tk.W, pady=2)
             self.http_host_var = tk.StringVar(value="messaging.magistrala.absmach.eu")
+            self.http_host_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.http_host_var, width=30).grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
             
             ttk.Label(self.protocol_settings_frame, text="Port:").grid(row=1, column=0, sticky=tk.W, pady=2)
             self.http_port_var = tk.StringVar(value="8443")
+            self.http_port_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.http_port_var, width=30).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2)
             
             ttk.Label(self.protocol_settings_frame, text="Topic/Path:").grid(row=2, column=0, sticky=tk.W, pady=2)
             self.http_topic_var = tk.StringVar(value="m/{{DOMAINID}}/c/{{CHANNELID}}/subtopic")
+            self.http_topic_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.http_topic_var, width=30).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=2)
             
             ttk.Label(self.protocol_settings_frame, text="Method:").grid(row=3, column=0, sticky=tk.W, pady=2)
             self.http_method_var = tk.StringVar(value="POST")
+            self.http_method_var.trace_add('write', save_callback)
             ttk.Combobox(self.protocol_settings_frame, textvariable=self.http_method_var, 
                         values=["POST", "PUT"], state="readonly", width=27).grid(row=3, column=1, sticky=(tk.W, tk.E), pady=2)
         
         elif protocol == "WebSocket":
             ttk.Label(self.protocol_settings_frame, text="Host:").grid(row=0, column=0, sticky=tk.W, pady=2)
             self.ws_host_var = tk.StringVar(value="messaging.magistrala.absmach.eu")
+            self.ws_host_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.ws_host_var, width=30).grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
             
             ttk.Label(self.protocol_settings_frame, text="Port:").grid(row=1, column=0, sticky=tk.W, pady=2)
             self.ws_port_var = tk.StringVar(value="8443")
+            self.ws_port_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.ws_port_var, width=30).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2)
             
             ttk.Label(self.protocol_settings_frame, text="Topic/Path:").grid(row=2, column=0, sticky=tk.W, pady=2)
             self.ws_topic_var = tk.StringVar(value="m/{{DOMAINID}}/c/{{CHANNELID}}/subtopic")
+            self.ws_topic_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.ws_topic_var, width=30).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=2)
         
         elif protocol == "CoAP":
             ttk.Label(self.protocol_settings_frame, text="Host:").grid(row=0, column=0, sticky=tk.W, pady=2)
             self.coap_host_var = tk.StringVar(value="messaging.magistrala.absmach.eu")
+            self.coap_host_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.coap_host_var, width=30).grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
             
             ttk.Label(self.protocol_settings_frame, text="Port:").grid(row=1, column=0, sticky=tk.W, pady=2)
             self.coap_port_var = tk.StringVar(value="5683")
+            self.coap_port_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.coap_port_var, width=30).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2)
             
             ttk.Label(self.protocol_settings_frame, text="Topic/Path:").grid(row=2, column=0, sticky=tk.W, pady=2)
             self.coap_topic_var = tk.StringVar(value="m/{{DOMAINID}}/c/{{CHANNELID}}/subtopic")
+            self.coap_topic_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.coap_topic_var, width=30).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=2)
     
     def _on_protocol_change(self, event=None):
@@ -975,6 +994,10 @@ class SimulatorGUI:
         self.password_var.trace_add('write', save_callback)
         self.protocol_var.trace_add('write', save_callback)
         self.format_var.trace_add('write', save_callback)
+        self.tls_mode_var.trace_add('write', save_callback)
+        self.ca_cert_var.trace_add('write', save_callback)
+        self.client_cert_var.trace_add('write', save_callback)
+        self.client_key_var.trace_add('write', save_callback)
         
         # Add traces to sensor checkboxes
         for var in self.sensor_vars.values():
