@@ -1,12 +1,24 @@
 """
-IoT Device Simulator - GUI Module
-Contains the graphical user interface for the simulator
+IoT Device Simulator - Enhanced GUI Module
+Contains the graphical user interface with matplotlib charts and animations
 """
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, filedialog
 import queue
 from typing import Dict, Any
+import re
+from collections import deque
+
+# Matplotlib for charts
+try:
+    import matplotlib
+    matplotlib.use('TkAgg')
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from matplotlib.figure import Figure
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
 
 # Import sensor generators
 from lib.sensors import (
@@ -17,17 +29,156 @@ from lib.sensors import (
 )
 
 
+class StatusIndicator(tk.Canvas):
+    """Animated LED-style status indicator"""
+    
+    def __init__(self, parent, size=20):
+        super().__init__(parent, width=size, height=size, highlightthickness=0, bg='#2b2b2b')
+        self.size = size
+        self.led = self.create_oval(2, 2, size-2, size-2, fill='gray', outline='')
+        self.status = 'off'
+        self.animation_id = None
+        self.pulse_alpha = 0
+        self.pulse_direction = 1
+        
+    def set_status(self, status):
+        """Set status: off, connecting, connected, error"""
+        self.status = status
+        if self.animation_id:
+            self.after_cancel(self.animation_id)
+            self.animation_id = None
+            
+        if status == 'off':
+            self.itemconfig(self.led, fill='#4a4a4a')
+        elif status == 'connecting':
+            self._animate_pulse()
+        elif status == 'connected':
+            self.itemconfig(self.led, fill='#00ff00')
+        elif status == 'error':
+            self.itemconfig(self.led, fill='#ff0000')
+    
+    def _animate_pulse(self):
+        """Animate pulsing effect for connecting status"""
+        if self.status != 'connecting':
+            return
+        
+        self.pulse_alpha += self.pulse_direction * 0.1
+        if self.pulse_alpha >= 1.0:
+            self.pulse_alpha = 1.0
+            self.pulse_direction = -1
+        elif self.pulse_alpha <= 0.3:
+            self.pulse_alpha = 0.3
+            self.pulse_direction = 1
+        
+        # Calculate color based on pulse alpha
+        brightness = int(255 * self.pulse_alpha)
+        color = f'#{brightness:02x}{brightness:02x}00'
+        self.itemconfig(self.led, fill=color)
+        
+        self.animation_id = self.after(50, self._animate_pulse)
+
+
+class SensorDataChart(ttk.Frame):
+    """Real-time sensor data chart using matplotlib"""
+    
+    def __init__(self, parent):
+        super().__init__(parent)
+        
+        if not MATPLOTLIB_AVAILABLE:
+            ttk.Label(self, text="Matplotlib not available. Install with: pip install matplotlib",
+                     foreground='orange').pack(pady=20)
+            return
+        
+        # Create figure
+        self.fig = Figure(figsize=(8, 4), dpi=80, facecolor='#2b2b2b')
+        self.ax = self.fig.add_subplot(111, facecolor='#1e1e1e')
+        self.ax.set_xlabel('Time (samples)', color='white')
+        self.ax.set_ylabel('Value', color='white')
+        self.ax.tick_params(colors='white')
+        self.ax.grid(True, alpha=0.2)
+        
+        # Data storage
+        self.max_points = 100
+        self.time_data = deque(maxlen=self.max_points)
+        self.sensor_data = {}
+        self.colors = ['#00ff00', '#00ffff', '#ff00ff', '#ffff00', '#ff8800']
+        self.lines = {}
+        self.time_counter = 0
+        
+        # Embed figure
+        self.canvas = FigureCanvasTkAgg(self.fig, self)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+    def add_data_point(self, sensor_name, value):
+        """Add a new data point for a sensor"""
+        if not MATPLOTLIB_AVAILABLE:
+            return
+            
+        # Initialize sensor if new
+        if sensor_name not in self.sensor_data:
+            self.sensor_data[sensor_name] = deque(maxlen=self.max_points)
+            color = self.colors[len(self.sensor_data) % len(self.colors)]
+            line, = self.ax.plot([], [], label=sensor_name, color=color, linewidth=2)
+            self.lines[sensor_name] = line
+            self.ax.legend(loc='upper left', framealpha=0.7)
+        
+        # Add data
+        self.sensor_data[sensor_name].append(value)
+        
+        # Update time data if needed
+        if len(self.time_data) < len(self.sensor_data[sensor_name]):
+            self.time_data.append(self.time_counter)
+            self.time_counter += 1
+        
+        # Update plot
+        self._update_plot()
+    
+    def _update_plot(self):
+        """Redraw the plot with current data"""
+        if not MATPLOTLIB_AVAILABLE:
+            return
+            
+        for sensor_name, data in self.sensor_data.items():
+            if sensor_name in self.lines:
+                time_slice = list(self.time_data)[-len(data):]
+                self.lines[sensor_name].set_data(time_slice, list(data))
+        
+        # Auto-scale
+        self.ax.relim()
+        self.ax.autoscale_view()
+        
+        self.canvas.draw_idle()
+    
+    def clear(self):
+        """Clear all data"""
+        if not MATPLOTLIB_AVAILABLE:
+            return
+            
+        self.sensor_data.clear()
+        self.lines.clear()
+        self.time_data.clear()
+        self.time_counter = 0
+        self.ax.clear()
+        self.ax.set_xlabel('Time (samples)', color='white')
+        self.ax.set_ylabel('Value', color='white')
+        self.ax.tick_params(colors='white')
+        self.ax.grid(True, alpha=0.2)
+        self.canvas.draw()
+
+
 class SimulatorGUI:
     """GUI for IoT Device Simulator"""
     
     def __init__(self, root, simulator_class):
         self.root = root
         self.root.title("IoT Device Simulator - Publisher")
-        self.root.geometry("900x700")
+        self.root.geometry("1200x800")
         
         self.simulator_class = simulator_class
         self.simulator = None
         self.log_update_job = None
+        self.message_count = 0
         
         self._create_menu()
         self._create_widgets()
@@ -42,11 +193,40 @@ class SimulatorGUI:
         menubar.add_cascade(label="Tools", menu=tools_menu)
         tools_menu.add_command(label="MQTT Subscriber...", command=self._launch_subscriber)
         tools_menu.add_separator()
+        
+        # Theme submenu
+        theme_menu = tk.Menu(tools_menu, tearoff=0)
+        tools_menu.add_cascade(label="Theme", menu=theme_menu)
+        themes = ['darkly', 'solar', 'superhero', 'cyborg', 'vapor', 'cosmo', 'flatly', 'journal', 'litera', 'minty']
+        for theme in themes:
+            theme_menu.add_command(label=theme.capitalize(), command=lambda t=theme: self._change_theme(t))
+        
+        tools_menu.add_separator()
         tools_menu.add_command(label="Exit", command=self.root.quit)
     
     def _create_widgets(self):
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Create tabs
+        config_tab = ttk.Frame(self.notebook)
+        dashboard_tab = ttk.Frame(self.notebook)
+        logs_tab = ttk.Frame(self.notebook)
+        
+        self.notebook.add(config_tab, text="⚙️  Configuration")
+        self.notebook.add(dashboard_tab, text="📊 Dashboard")
+        self.notebook.add(logs_tab, text="📝 Logs")
+        
+        # Populate tabs
+        self._create_config_tab(config_tab)
+        self._create_dashboard_tab(dashboard_tab)
+        self._create_logs_tab(logs_tab)
+    
+    def _create_config_tab(self, parent):
+        """Create configuration tab"""
         # Main container
-        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame = ttk.Frame(parent, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Device Configuration
@@ -76,18 +256,18 @@ class SimulatorGUI:
         
         self.sensor_vars = {}
         sensors = [
-            ("Location (GPS)", "location"),
-            ("Temperature", "temperature"),
-            ("Pressure", "pressure"),
-            ("Humidity", "humidity"),
-            ("Accelerometer", "accelerometer"),
-            ("CO2 (PPM)", "co2"),
-            ("Flow Rate", "flow"),
-            ("Soil Moisture", "soil_moisture"),
-            ("Soil pH", "soil_ph"),
-            ("Light Intensity", "light"),
-            ("Rain", "rain"),
-            ("Wind Speed", "wind")
+            ("📍 Location (GPS)", "location"),
+            ("🌡️  Temperature", "temperature"),
+            ("💨 Pressure", "pressure"),
+            ("💧 Humidity", "humidity"),
+            ("📊 Accelerometer", "accelerometer"),
+            ("🌫️  CO2 (PPM)", "co2"),
+            ("🚰 Flow Rate", "flow"),
+            ("🌱 Soil Moisture", "soil_moisture"),
+            ("🧪 Soil pH", "soil_ph"),
+            ("💡 Light Intensity", "light"),
+            ("🌧️  Rain", "rain"),
+            ("💨 Wind Speed", "wind")
         ]
         
         for i, (label, key) in enumerate(sensors):
@@ -170,39 +350,88 @@ class SimulatorGUI:
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=2, column=0, columnspan=2, pady=10)
         
-        self.start_btn = ttk.Button(button_frame, text="Start Simulation", command=self._start_simulation)
+        self.start_btn = ttk.Button(button_frame, text="▶  Start Simulation", command=self._start_simulation)
         self.start_btn.grid(row=0, column=0, padx=5)
         
-        self.stop_btn = ttk.Button(button_frame, text="Stop Simulation", command=self._stop_simulation, state=tk.DISABLED)
+        self.stop_btn = ttk.Button(button_frame, text="⏹  Stop Simulation", command=self._stop_simulation, state=tk.DISABLED)
         self.stop_btn.grid(row=0, column=1, padx=5)
-        
-        ttk.Button(button_frame, text="Clear Log", command=self._clear_log).grid(row=0, column=2, padx=5)
-        
-        ttk.Button(button_frame, text="Detach Logs", command=self._detach_logs).grid(row=0, column=3, padx=5)
         
         # Status
         self.status_var = tk.StringVar(value="Status: Ready")
         status_label = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN)
         status_label.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
         
-        # Log Output
-        log_frame = ttk.LabelFrame(main_frame, text="Log Output", padding="10")
-        log_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        # Configure grid weights
+        parent.columnconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.columnconfigure(1, weight=1)
+    
+    def _create_dashboard_tab(self, parent):
+        """Create dashboard tab with status and charts"""
+        dashboard_frame = ttk.Frame(parent, padding="10")
+        dashboard_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=25, width=100, state=tk.DISABLED, wrap=tk.WORD)
-        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Status card
+        status_card = ttk.LabelFrame(dashboard_frame, text="Connection Status", padding="10")
+        status_card.pack(fill=tk.X, pady=5)
+        
+        status_inner = ttk.Frame(status_card)
+        status_inner.pack(fill=tk.X)
+        
+        ttk.Label(status_inner, text="Status:").pack(side=tk.LEFT, padx=5)
+        self.status_led = StatusIndicator(status_inner)
+        self.status_led.pack(side=tk.LEFT, padx=5)
+        self.status_led.set_status('off')
+        
+        self.connection_label = tk.StringVar(value="Disconnected")
+        ttk.Label(status_inner, textvariable=self.connection_label, font=('TkDefaultFont', 10, 'bold')).pack(side=tk.LEFT, padx=10)
+        
+        ttk.Separator(status_inner, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        
+        ttk.Label(status_inner, text="Messages:").pack(side=tk.LEFT, padx=5)
+        self.msg_count_var = tk.StringVar(value="0")
+        ttk.Label(status_inner, textvariable=self.msg_count_var, font=('TkDefaultFont', 12, 'bold'), foreground='green').pack(side=tk.LEFT, padx=5)
+        
+        ttk.Separator(status_inner, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        
+        ttk.Label(status_inner, text="Protocol:").pack(side=tk.LEFT, padx=5)
+        self.proto_display_var = tk.StringVar(value="None")
+        ttk.Label(status_inner, textvariable=self.proto_display_var, font=('TkDefaultFont', 10, 'bold'), foreground='cyan').pack(side=tk.LEFT, padx=5)
+        
+        # Chart area
+        chart_card = ttk.LabelFrame(dashboard_frame, text="Real-Time Sensor Data", padding="10")
+        chart_card.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        self.sensor_chart = SensorDataChart(chart_card)
+        self.sensor_chart.pack(fill=tk.BOTH, expand=True)
+        
+        # Chart controls
+        chart_controls = ttk.Frame(chart_card)
+        chart_controls.pack(fill=tk.X, pady=5)
+        ttk.Button(chart_controls, text="Clear Chart", command=self._clear_chart).pack(side=tk.LEFT, padx=5)
+    
+    def _create_logs_tab(self, parent):
+        """Create logs tab"""
+        log_frame = ttk.Frame(parent, padding="10")
+        log_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Log toolbar
+        toolbar = ttk.Frame(log_frame)
+        toolbar.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Button(toolbar, text="Clear Log", command=self._clear_log).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="Detach Window", command=self._detach_logs).pack(side=tk.LEFT, padx=5)
+        
+        # Log Output
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=30, width=120, state=tk.DISABLED, wrap=tk.WORD)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
         
         # Detachable log window reference
         self.detached_log_window = None
         
         # Configure grid weights
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(4, weight=1)
         log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
+        log_frame.rowconfigure(1, weight=1)
     
     def _create_protocol_settings(self):
         # Clear existing widgets
@@ -401,6 +630,15 @@ class SimulatorGUI:
             self.stop_btn.config(state=tk.NORMAL)
             self.status_var.set(f"Status: Running ({protocol} - {self.format_var.get()})")
             
+            # Update dashboard
+            self.status_led.set_status('connecting')
+            self.connection_label.set("Connecting...")
+            self.proto_display_var.set(f"{protocol} / {self.format_var.get()}")
+            
+            # Set to connected after a brief delay
+            self.root.after(1000, lambda: self.status_led.set_status('connected'))
+            self.root.after(1000, lambda: self.connection_label.set("Connected"))
+            
             self._log("✓ Simulation started successfully")
             self._log("="*60)
             self._update_log()
@@ -421,6 +659,11 @@ class SimulatorGUI:
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.status_var.set("Status: Stopped")
+        
+        # Update dashboard
+        self.status_led.set_status('off')
+        self.connection_label.set("Disconnected")
+        
         self._log("Simulation stopped")
     
     def _get_protocol_config(self) -> Dict[str, Any]:
@@ -539,6 +782,14 @@ class SimulatorGUI:
         self.log_text.see(tk.END)
         self.log_text.config(state=tk.DISABLED)
         
+        # Update message counter if message was sent
+        if "Sent:" in message:
+            self.message_count += 1
+            self.msg_count_var.set(str(self.message_count))
+            
+            # Extract sensor data for charting
+            self._extract_and_chart_data(message)
+        
         # Also update detached log window if it exists
         if self.detached_log_window and hasattr(self.detached_log_window, 'log_text'):
             try:
@@ -646,3 +897,52 @@ class SimulatorGUI:
             subprocess.Popen([sys.executable, "-m", "lib.subscriber_gui"])
         except Exception as e:
             messagebox.showerror("Error", f"Failed to launch MQTT Subscriber: {e}")
+    
+    def _clear_chart(self):
+        """Clear the sensor data chart"""
+        if hasattr(self, 'sensor_chart'):
+            self.sensor_chart.clear()
+    
+    def _change_theme(self, theme_name):
+        """Change the ttkbootstrap theme"""
+        try:
+            import ttkbootstrap as ttk_bootstrap
+            style = ttk_bootstrap.Style.get_instance()
+            if style:
+                style.theme_use(theme_name)
+                self._log(f"Theme changed to: {theme_name}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to change theme: {e}")
+    
+    def _extract_and_chart_data(self, message):
+        """Extract sensor data from log messages and add to chart"""
+        if not MATPLOTLIB_AVAILABLE or not hasattr(self, 'sensor_chart'):
+            return
+        
+        try:
+            # Pattern to extract sensor values from SenML format
+            # Example: {"n":"temperature","u":"Cel","v":22.5,...}
+            import json
+            
+            # Try to find JSON in the message
+            if '[{' in message and '}]' in message:
+                # Extract JSON array
+                start = message.find('[{')
+                end = message.find('}]') + 2
+                json_str = message[start:end]
+                
+                try:
+                    data = json.loads(json_str)
+                    if isinstance(data, list):
+                        for item in data:
+                            if isinstance(item, dict) and 'n' in item and 'v' in item:
+                                sensor_name = item['n']
+                                value = item['v']
+                                if isinstance(value, (int, float)):
+                                    self.sensor_chart.add_data_point(sensor_name, value)
+                except json.JSONDecodeError:
+                    pass
+        except Exception:
+            # Silently ignore parsing errors
+            pass
+

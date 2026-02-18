@@ -6,6 +6,7 @@ Supports multiple data types and SenML format
 """
 
 import tkinter as tk
+import ttkbootstrap as ttk_bootstrap
 import json
 import threading
 import time
@@ -75,11 +76,14 @@ class SenMLEncoder:
         base_time = int(reading.timestamp * 1_000_000_000)
         
         if isinstance(reading, LocationReading):
+            # Format coordinates as JSON string for vs (string value) field
+            coordinates_json = json.dumps({
+                "latitude": reading.latitude,
+                "longitude": reading.longitude
+            }, ensure_ascii=False)
             senml_pack = [
-                {"n": "latitude", "u": "lat", "bt": base_time, "v": reading.latitude},
-                {"n": "longitude", "u": "lon", "v": reading.longitude},
-                {"n": "altitude", "u": "m", "v": reading.altitude},
-                {"n": "accuracy", "u": "m", "v": reading.accuracy}
+                {"n": "coordinates", "bt": base_time, "vs": coordinates_json},
+                {"n": "altitude", "u": "m", "v": reading.altitude}
             ]
         elif isinstance(reading, TemperatureReading):
             senml_pack = [
@@ -711,7 +715,7 @@ class IoTDeviceSimulator:
 # ==================== Main ====================
 
 def main():
-    root = tk.Tk()
+    root = ttk_bootstrap.Window(themename="darkly")
     app = SimulatorGUI(root, IoTDeviceSimulator)
     root.mainloop()
 

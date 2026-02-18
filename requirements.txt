@@ -4,6 +4,11 @@ requests>=2.31.0          # HTTP protocol support
 websocket-client>=1.6.1   # WebSocket protocol support
 aiocoap>=0.4.5            # CoAP protocol support
 
+# GUI dependencies
+ttkbootstrap>=1.10.1      # Modern themed tkinter widgets
+matplotlib>=3.8.0         # Data visualization and charts
+pillow>=10.0.0            # Image processing for icons
+
 # Test server dependencies
 websockets>=12.0          # WebSocket test server
 
