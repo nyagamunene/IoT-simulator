@@ -144,6 +144,11 @@ class SensorDataChart(ttk.Frame):
         if not MATPLOTLIB_AVAILABLE:
             return
             
+        # Track if we have any visible data
+        has_visible_data = False
+        visible_x_data = []
+        visible_y_data = []
+        
         for sensor_name, data in self.sensor_data.items():
             if sensor_name in self.lines:
                 time_slice = list(self.time_data)[-len(data):]
@@ -151,12 +156,25 @@ class SensorDataChart(ttk.Frame):
                 if self.sensor_visible.get(sensor_name, True):
                     self.lines[sensor_name].set_data(time_slice, list(data))
                     self.lines[sensor_name].set_visible(True)
+                    has_visible_data = True
+                    # Collect data for axis scaling
+                    visible_x_data.extend(time_slice)
+                    visible_y_data.extend(list(data))
                 else:
                     self.lines[sensor_name].set_visible(False)
         
-        # Auto-scale
-        self.ax.relim()
-        self.ax.autoscale_view()
+        # Auto-scale based only on visible data
+        if has_visible_data and visible_x_data and visible_y_data:
+            # Set limits with a small margin
+            x_min, x_max = min(visible_x_data), max(visible_x_data)
+            y_min, y_max = min(visible_y_data), max(visible_y_data)
+            
+            # Add 5% margin
+            x_margin = (x_max - x_min) * 0.05 if x_max > x_min else 1
+            y_margin = (y_max - y_min) * 0.05 if y_max > y_min else 1
+            
+            self.ax.set_xlim(x_min - x_margin, x_max + x_margin)
+            self.ax.set_ylim(y_min - y_margin, y_max + y_margin)
         
         self.canvas.draw_idle()
     
