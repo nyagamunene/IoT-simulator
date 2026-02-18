@@ -104,6 +104,7 @@ class SensorDataChart(ttk.Frame):
         self.max_points = 100
         self.time_data = deque(maxlen=self.max_points)
         self.sensor_data = {}
+        self.sensor_visible = {}  # Track which sensors are visible
         self.colors = ['#00ff00', '#00ffff', '#ff00ff', '#ffff00', '#ff8800']
         self.lines = {}
         self.time_counter = 0
@@ -121,6 +122,7 @@ class SensorDataChart(ttk.Frame):
         # Initialize sensor if new
         if sensor_name not in self.sensor_data:
             self.sensor_data[sensor_name] = deque(maxlen=self.max_points)
+            self.sensor_visible[sensor_name] = True  # Visible by default
             color = self.colors[len(self.sensor_data) % len(self.colors)]
             line, = self.ax.plot([], [], label=sensor_name, color=color, linewidth=2)
             self.lines[sensor_name] = line
@@ -145,7 +147,12 @@ class SensorDataChart(ttk.Frame):
         for sensor_name, data in self.sensor_data.items():
             if sensor_name in self.lines:
                 time_slice = list(self.time_data)[-len(data):]
-                self.lines[sensor_name].set_data(time_slice, list(data))
+                # Only update and show line if sensor is visible
+                if self.sensor_visible.get(sensor_name, True):
+                    self.lines[sensor_name].set_data(time_slice, list(data))
+                    self.lines[sensor_name].set_visible(True)
+                else:
+                    self.lines[sensor_name].set_visible(False)
         
         # Auto-scale
         self.ax.relim()
@@ -153,12 +160,26 @@ class SensorDataChart(ttk.Frame):
         
         self.canvas.draw_idle()
     
+    def set_sensor_visibility(self, sensor_name, visible):
+        """Show or hide a specific sensor"""
+        if not MATPLOTLIB_AVAILABLE:
+            return
+            
+        if sensor_name in self.sensor_visible:
+            self.sensor_visible[sensor_name] = visible
+            self._update_plot()
+    
+    def get_sensor_names(self):
+        """Get list of all sensor names in the chart"""
+        return list(self.sensor_data.keys())
+    
     def clear(self):
         """Clear all data"""
         if not MATPLOTLIB_AVAILABLE:
             return
             
         self.sensor_data.clear()
+        self.sensor_visible.clear()
         self.lines.clear()
         self.time_data.clear()
         self.time_counter = 0
@@ -407,6 +428,21 @@ class SimulatorGUI:
         ttk.Label(status_inner, text="Protocol:").pack(side=tk.LEFT, padx=5)
         self.proto_display_var = tk.StringVar(value="None")
         ttk.Label(status_inner, textvariable=self.proto_display_var, font=('TkDefaultFont', 10, 'bold'), foreground='cyan').pack(side=tk.LEFT, padx=5)
+        
+        # Sensor filter panel
+        filter_card = ttk.LabelFrame(dashboard_frame, text="Chart Filters", padding="10")
+        filter_card.pack(fill=tk.X, pady=5)
+        
+        self.sensor_filter_frame = ttk.Frame(filter_card)
+        self.sensor_filter_frame.pack(fill=tk.X)
+        
+        self.sensor_visibility_vars = {}  # Dictionary to store checkbox variables
+        
+        ttk.Label(self.sensor_filter_frame, text="Select sensors to display:", 
+                 font=('TkDefaultFont', 9, 'italic')).pack(side=tk.LEFT, padx=5)
+        
+        self.filter_checkboxes_frame = ttk.Frame(filter_card)
+        self.filter_checkboxes_frame.pack(fill=tk.X, pady=5)
         
         # Chart area
         chart_card = ttk.LabelFrame(dashboard_frame, text="Real-Time Sensor Data", padding="10")
@@ -935,6 +971,38 @@ class SimulatorGUI:
         """Clear the sensor data chart"""
         if hasattr(self, 'sensor_chart'):
             self.sensor_chart.clear()
+            # Clear filter checkboxes
+            for widget in self.filter_checkboxes_frame.winfo_children():
+                widget.destroy()
+            self.sensor_visibility_vars.clear()
+    
+    def _update_sensor_filters(self):
+        """Update the sensor filter checkboxes based on available sensors"""
+        if not hasattr(self, 'sensor_chart'):
+            return
+        
+        current_sensors = set(self.sensor_chart.get_sensor_names())
+        existing_sensors = set(self.sensor_visibility_vars.keys())
+        
+        # Add checkboxes for new sensors
+        new_sensors = current_sensors - existing_sensors
+        for sensor_name in sorted(new_sensors):
+            var = tk.BooleanVar(value=True)
+            self.sensor_visibility_vars[sensor_name] = var
+            
+            cb = ttk.Checkbutton(
+                self.filter_checkboxes_frame,
+                text=sensor_name,
+                variable=var,
+                command=lambda s=sensor_name: self._toggle_sensor_visibility(s)
+            )
+            cb.pack(side=tk.LEFT, padx=5)
+    
+    def _toggle_sensor_visibility(self, sensor_name):
+        """Toggle visibility of a sensor in the chart"""
+        if sensor_name in self.sensor_visibility_vars:
+            visible = self.sensor_visibility_vars[sensor_name].get()
+            self.sensor_chart.set_sensor_visibility(sensor_name, visible)
     
     def _change_theme(self, theme_name):
         """Change the ttkbootstrap theme"""
@@ -964,6 +1032,8 @@ class SimulatorGUI:
                 try:
                     data = json.loads(json_str)
                     
+                    data_added = False  # Track if any data was added
+                    
                     # Handle SenML format (array of objects)
                     if isinstance(data, list):
                         for item in data:
@@ -972,6 +1042,7 @@ class SimulatorGUI:
                                 value = item['v']
                                 if isinstance(value, (int, float)):
                                     self.sensor_chart.add_data_point(sensor_name, value)
+                                    data_added = True
                     
                     # Handle regular JSON format (object with sensor names as keys)
                     elif isinstance(data, dict):
@@ -980,9 +1051,15 @@ class SimulatorGUI:
                                 value = sensor_data['value']
                                 if isinstance(value, (int, float)):
                                     self.sensor_chart.add_data_point(sensor_name, value)
+                                    data_added = True
                             elif isinstance(sensor_data, (int, float)):
                                 # Direct value
                                 self.sensor_chart.add_data_point(sensor_name, sensor_data)
+                                data_added = True
+                    
+                    # Update filter checkboxes if new data was added
+                    if data_added:
+                        self._update_sensor_filters()
                                 
                 except json.JSONDecodeError:
                     pass
