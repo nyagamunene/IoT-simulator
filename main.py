@@ -104,6 +104,12 @@ class SenMLEncoder:
                 {"n": "accel_y", "u": "m/s2", "v": reading.y},
                 {"n": "accel_z", "u": "m/s2", "v": reading.z}
             ]
+        elif isinstance(reading, GyroscopeReading):
+            senml_pack = [
+                {"n": "gyro_x", "bu": "deg/s", "u": "deg/s", "bt": base_time, "v": reading.x},
+                {"n": "gyro_y", "u": "deg/s", "v": reading.y},
+                {"n": "gyro_z", "u": "deg/s", "v": reading.z}
+            ]
         elif isinstance(reading, CO2Reading):
             senml_pack = [
                 {"n": "co2", "bu": "ppm", "u": "ppm", "bt": base_time, "v": reading.co2_ppm}
@@ -133,6 +139,17 @@ class SenMLEncoder:
             senml_pack = [
                 {"n": "wind_speed", "bu": "m/s", "u": "m/s", "bt": base_time, "v": reading.speed},
                 {"n": "wind_direction", "u": "deg", "v": reading.direction}
+            ]
+        elif isinstance(reading, SpeedReading):
+            senml_pack = [
+                {"n": "speed", "bu": "m/s", "u": "m/s", "bt": base_time, "v": reading.speed},
+                {"n": "heading", "u": "deg", "v": reading.heading}
+            ]
+        elif isinstance(reading, FuelConsumptionReading):
+            senml_pack = [
+                {"n": "fuel_consumption_rate", "bu": "L/h", "u": "L/h", "bt": base_time, "v": reading.consumption_rate},
+                {"n": "fuel_level", "u": "%", "v": reading.fuel_level},
+                {"n": "fuel_total_consumed", "u": "L", "v": reading.total_consumed}
             ]
         
         return senml_pack
