@@ -152,7 +152,7 @@ class MotionState:
     - high_speed: High speed movement (30-70 m/s, 108-250 km/h)
     """
     
-    def __init__(self, lat: float = 37.7749, lon: float = -122.4194, altitude: float = 50.0, 
+    def __init__(self, lat: float = 40.7128, lon: float = -74.0060, altitude: float = 10.0, 
                  mode: str = "low_speed"):
         # Position (GPS)
         self.latitude = lat
@@ -260,7 +260,7 @@ class DataGenerator:
 class LocationGenerator(DataGenerator):
     """Generates realistic GPS location data using shared motion state"""
     
-    def __init__(self, device_id: str, base_lat: float = 37.7749, base_lon: float = -122.4194, 
+    def __init__(self, device_id: str, base_lat: float = 40.7128, base_lon: float = -74.0060, 
                  motion_state: Optional[MotionState] = None):
         super().__init__(device_id)
         self.motion_state = motion_state if motion_state else MotionState(base_lat, base_lon)

@@ -262,22 +262,26 @@ class SimulatorGUI:
         # Create tabs
         config_tab = ttk.Frame(self.notebook)
         dashboard_tab = ttk.Frame(self.notebook)
+        sensor_config_tab = ttk.Frame(self.notebook)
         logs_tab = ttk.Frame(self.notebook)
         
         self.notebook.add(config_tab, text="⚙️  Configuration")
         self.notebook.add(dashboard_tab, text="📊 Dashboard")
+        self.notebook.add(sensor_config_tab, text="🔧 Sensor Config")
         self.notebook.add(logs_tab, text="📝 Logs")
         
         # Populate tabs
         self._create_config_tab(config_tab)
         self._create_dashboard_tab(dashboard_tab)
+        self._create_sensor_config_tab(sensor_config_tab)
         self._create_logs_tab(logs_tab)
     
     def _create_config_tab(self, parent):
         """Create configuration tab"""
-        # Create canvas with scrollbar for scrollable content
+        # Create canvas with scrollbars for scrollable content (vertical and horizontal)
         canvas = tk.Canvas(parent, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        v_scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        h_scrollbar = ttk.Scrollbar(parent, orient="horizontal", command=canvas.xview)
         scrollable_frame = ttk.Frame(canvas)
         
         scrollable_frame.bind(
@@ -286,17 +290,26 @@ class SimulatorGUI:
         )
         
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
         
-        # Pack canvas and scrollbar
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        # Pack canvas and scrollbars
+        canvas.grid(row=0, column=0, sticky="nsew")
+        v_scrollbar.grid(row=0, column=1, sticky="ns")
+        h_scrollbar.grid(row=1, column=0, sticky="ew")
         
-        # Enable mousewheel scrolling
+        # Configure grid weights
+        parent.grid_rowconfigure(0, weight=1)
+        parent.grid_columnconfigure(0, weight=1)
+        
+        # Enable mousewheel scrolling (vertical and horizontal with Shift)
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1*(event.delta/120)), "units")
         
+        def _on_shift_mousewheel(event):
+            canvas.xview_scroll(int(-1*(event.delta/120)), "units")
+        
         canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        canvas.bind_all("<Shift-MouseWheel>", _on_shift_mousewheel)
         
         # Main container inside scrollable frame
         main_frame = ttk.Frame(scrollable_frame, padding="10")
@@ -337,6 +350,30 @@ class SimulatorGUI:
         sensor_frame = ttk.LabelFrame(main_frame, text="Sensors", padding="10")
         sensor_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N), pady=5, padx=(0, 5))
         
+        # Create canvas with scrollbar for scrollable sensors
+        sensor_canvas = tk.Canvas(sensor_frame, highlightthickness=0, height=280)
+        sensor_scrollbar = ttk.Scrollbar(sensor_frame, orient="vertical", command=sensor_canvas.yview)
+        scrollable_sensor_frame = ttk.Frame(sensor_canvas)
+        
+        scrollable_sensor_frame.bind(
+            "<Configure>",
+            lambda e: sensor_canvas.configure(scrollregion=sensor_canvas.bbox("all"))
+        )
+        
+        sensor_canvas.create_window((0, 0), window=scrollable_sensor_frame, anchor="nw")
+        sensor_canvas.configure(yscrollcommand=sensor_scrollbar.set)
+        
+        # Pack canvas and scrollbar
+        sensor_canvas.pack(side="left", fill="both", expand=True)
+        sensor_scrollbar.pack(side="right", fill="y")
+        
+        # Enable mousewheel scrolling for sensors
+        def _on_sensor_mousewheel(event):
+            sensor_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        sensor_canvas.bind("<Enter>", lambda e: sensor_canvas.bind_all("<MouseWheel>", _on_sensor_mousewheel))
+        sensor_canvas.bind("<Leave>", lambda e: sensor_canvas.unbind_all("<MouseWheel>"))
+        
         self.sensor_vars = {}
         sensors = [
             ("📍 Location (GPS)", "location"),
@@ -359,25 +396,7 @@ class SimulatorGUI:
         for i, (label, key) in enumerate(sensors):
             var = tk.BooleanVar(value=True if key == 'temperature' else False)
             self.sensor_vars[key] = var
-            ttk.Checkbutton(sensor_frame, text=label, variable=var).grid(row=i, column=0, sticky=tk.W, pady=2)
-        
-        # Motion Mode Selection
-        ttk.Separator(sensor_frame, orient=tk.HORIZONTAL).grid(row=len(sensors), column=0, sticky=(tk.W, tk.E), pady=10)
-        
-        motion_label = ttk.Label(sensor_frame, text="Motion Mode:", font=('TkDefaultFont', 9, 'bold'))
-        motion_label.grid(row=len(sensors) + 1, column=0, sticky=tk.W, pady=(5, 2))
-        
-        self.motion_mode_var = tk.StringVar(value="low_speed")
-        motion_modes = [
-            ("🛑 Stationary", "stationary"),
-            ("🚶 Low Speed (0-36 km/h)", "low_speed"),
-            ("� Medium Speed (36-108 km/h)", "medium_speed"),
-            ("🏎️ High Speed (108-250 km/h)", "high_speed")
-        ]
-        
-        for idx, (label, mode) in enumerate(motion_modes):
-            ttk.Radiobutton(sensor_frame, text=label, variable=self.motion_mode_var, 
-                          value=mode).grid(row=len(sensors) + 2 + idx, column=0, sticky=tk.W, padx=15, pady=2)
+            ttk.Checkbutton(scrollable_sensor_frame, text=label, variable=var).grid(row=i, column=0, sticky=tk.W, pady=2)
         
         # Protocol Configuration
         protocol_frame = ttk.LabelFrame(main_frame, text="Protocol Configuration", padding="10")
@@ -530,6 +549,38 @@ class SimulatorGUI:
         chart_controls = ttk.Frame(chart_card)
         chart_controls.pack(fill=tk.X, pady=5)
         ttk.Button(chart_controls, text="Clear Chart", command=self._clear_chart).pack(side=tk.LEFT, padx=5)
+    
+    def _create_sensor_config_tab(self, parent):
+        """Create sensor configuration tab"""
+        main_frame = ttk.Frame(parent, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Motion Configuration
+        motion_frame = ttk.LabelFrame(main_frame, text="Motion Configuration", padding="15")
+        motion_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Motion Mode Selection
+        motion_label = ttk.Label(motion_frame, text="Motion Mode:", font=('TkDefaultFont', 10, 'bold'))
+        motion_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+        
+        description = ttk.Label(motion_frame, 
+                               text="Select the motion profile for location-based sensors (GPS, Speed, Accelerometer, Fuel):",
+                               font=('TkDefaultFont', 9))
+        description.grid(row=1, column=0, sticky=tk.W, pady=(0, 15))
+        
+        self.motion_mode_var = tk.StringVar(value="low_speed")
+        motion_modes = [
+            ("🛑 Stationary", "stationary", "No movement - vehicle is parked"),
+            ("🚶 Low Speed (0-36 km/h)", "low_speed", "Urban driving, residential areas"),
+            ("🚙 Medium Speed (36-108 km/h)", "medium_speed", "City traffic, suburban roads"),
+            ("🏎️ High Speed (108-250 km/h)", "high_speed", "Highway, motorway driving")
+        ]
+        
+        for idx, (label, mode, desc) in enumerate(motion_modes):
+            rb = ttk.Radiobutton(motion_frame, text=label, variable=self.motion_mode_var, value=mode)
+            rb.grid(row=idx+2, column=0, sticky=tk.W, pady=5, padx=10)
+            desc_label = ttk.Label(motion_frame, text=desc, font=('TkDefaultFont', 8), foreground='gray')
+            desc_label.grid(row=idx+2, column=1, sticky=tk.W, pady=5, padx=(0, 10))
     
     def _create_logs_tab(self, parent):
         """Create logs tab"""
