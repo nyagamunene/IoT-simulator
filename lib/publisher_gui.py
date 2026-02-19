@@ -29,7 +29,7 @@ from lib.sensors import (
     HumidityGenerator, AccelerometerGenerator, GyroscopeGenerator, CO2Generator,
     FlowGenerator, SoilMoistureGenerator, SoilPHGenerator,
     LightIntensityGenerator, RainGenerator, WindSpeedGenerator, FuelConsumptionGenerator,
-    SpeedGenerator, VehicleMotionState
+    SpeedGenerator, MotionState
 )
 
 
@@ -275,8 +275,31 @@ class SimulatorGUI:
     
     def _create_config_tab(self, parent):
         """Create configuration tab"""
-        # Main container
-        main_frame = ttk.Frame(parent, padding="10")
+        # Create canvas with scrollbar for scrollable content
+        canvas = tk.Canvas(parent, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Enable mousewheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        # Main container inside scrollable frame
+        main_frame = ttk.Frame(scrollable_frame, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Device Configuration
@@ -327,6 +350,23 @@ class SimulatorGUI:
             var = tk.BooleanVar(value=True if key == 'temperature' else False)
             self.sensor_vars[key] = var
             ttk.Checkbutton(sensor_frame, text=label, variable=var).grid(row=i, column=0, sticky=tk.W, pady=2)
+        
+        # Motion Mode Selection
+        ttk.Separator(sensor_frame, orient=tk.HORIZONTAL).grid(row=len(sensors), column=0, sticky=(tk.W, tk.E), pady=10)
+        
+        motion_label = ttk.Label(sensor_frame, text="Motion Mode:", font=('TkDefaultFont', 9, 'bold'))
+        motion_label.grid(row=len(sensors) + 1, column=0, sticky=tk.W, pady=(5, 2))
+        
+        self.motion_mode_var = tk.StringVar(value="low_speed")
+        motion_modes = [
+            ("🛑 Stationary", "stationary"),
+            ("🚶 Low Speed (0-36 km/h)", "low_speed"),
+            ("🚗 High Speed (36-108 km/h)", "high_speed")
+        ]
+        
+        for idx, (label, mode) in enumerate(motion_modes):
+            ttk.Radiobutton(sensor_frame, text=label, variable=self.motion_mode_var, 
+                          value=mode).grid(row=len(sensors) + 2 + idx, column=0, sticky=tk.W, padx=15, pady=2)
         
         # Protocol Configuration
         protocol_frame = ttk.LabelFrame(main_frame, text="Protocol Configuration", padding="10")
@@ -416,6 +456,8 @@ class SimulatorGUI:
         
         # Configure grid weights
         parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+        scrollable_frame.columnconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
     
@@ -645,7 +687,8 @@ class SimulatorGUI:
             self.simulator = self.simulator_class(device_id)
             
             # Create shared motion state for coordinated sensors (GPS, speed, accelerometer)
-            motion_state = VehicleMotionState()
+            motion_mode = self.motion_mode_var.get()
+            motion_state = MotionState(mode=motion_mode)
             
             # Add selected sensors
             if self.sensor_vars['location'].get():
@@ -1117,6 +1160,7 @@ class SimulatorGUI:
         self.ca_cert_var.trace_add('write', save_callback)
         self.client_cert_var.trace_add('write', save_callback)
         self.client_key_var.trace_add('write', save_callback)
+        self.motion_mode_var.trace_add('write', save_callback)
         
         # Add traces to sensor checkboxes
         for var in self.sensor_vars.values():
@@ -1136,6 +1180,7 @@ class SimulatorGUI:
                 'ca_cert': self.ca_cert_var.get(),
                 'client_cert': self.client_cert_var.get(),
                 'client_key': self.client_key_var.get(),
+                'motion_mode': self.motion_mode_var.get(),
                 'sensors': {key: var.get() for key, var in self.sensor_vars.items()}
             }
             
@@ -1206,6 +1251,8 @@ class SimulatorGUI:
                 self.client_cert_var.set(config['client_cert'])
             if 'client_key' in config:
                 self.client_key_var.set(config['client_key'])
+            if 'motion_mode' in config:
+                self.motion_mode_var.set(config['motion_mode'])
             
             # Restore sensor selections
             if 'sensors' in config:

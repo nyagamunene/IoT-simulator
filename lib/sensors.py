@@ -138,12 +138,19 @@ class SpeedReading(SensorReading):
     unit: str = "m/s"
 
 
-# ==================== Vehicle Motion State ====================
+# ==================== Motion State ====================
 
-class VehicleMotionState:
-    """Shared state for coordinated motion sensors (GPS, Speed, Accelerometer)"""
+class MotionState:
+    """Shared state for coordinated motion sensors (GPS, Speed, Accelerometer)
     
-    def __init__(self, lat: float = 37.7749, lon: float = -122.4194, altitude: float = 50.0):
+    Supports three motion modes:
+    - stationary: No movement (speed=0, no position changes)
+    - low_speed: Low speed movement (0-10 m/s, 0-36 km/h)
+    - high_speed: High speed movement (10-30 m/s, 36-108 km/h)
+    """
+    
+    def __init__(self, lat: float = 37.7749, lon: float = -122.4194, altitude: float = 50.0, 
+                 mode: str = "low_speed"):
         # Position (GPS)
         self.latitude = lat
         self.longitude = lon
@@ -157,28 +164,52 @@ class VehicleMotionState:
         self.acceleration_x = 0.0  # m/s^2 (lateral)
         self.acceleration_y = 0.0  # m/s^2 (longitudinal)
         self.acceleration_z = 0.0  # m/s^2 (vertical)
+        
+        # Motion mode
+        self.mode = mode  # "stationary", "low_speed", or "high_speed"
     
     def update(self, dt: float = 5.0):
-        """Update motion state based on physics
+        """Update motion state based on physics and current mode
         dt: time interval in seconds (default 5s)
         """
-        # Generate realistic acceleration changes (simulating vehicle dynamics)
-        # Longitudinal acceleration (speeding up/slowing down)
-        target_speed = random.uniform(5.0, 25.0)  # target speed 5-25 m/s (18-90 km/h)
-        speed_diff = target_speed - self.speed
+        if self.mode == "stationary":
+            # No movement at all
+            self.speed = 0.0
+            self.acceleration_x = 0.0
+            self.acceleration_y = 0.0
+            self.acceleration_z = 0.0
+            return
         
-        # Limit acceleration to realistic values (-3 to 3 m/s^2)
-        self.acceleration_y = max(-3.0, min(3.0, speed_diff * 0.3))
+        # Generate realistic acceleration changes based on mode
+        if self.mode == "low_speed":
+            # Low speed: 0-10 m/s (0-36 km/h)
+            target_speed = random.uniform(2.0, 10.0)
+            max_accel = 2.0  # m/s^2
+            lateral_accel_range = 1.5
+        else:  # high_speed
+            # High speed: 10-30 m/s (36-108 km/h)
+            target_speed = random.uniform(10.0, 30.0)
+            max_accel = 3.0  # m/s^2
+            lateral_accel_range = 2.0
+        
+        # Longitudinal acceleration (speeding up/slowing down)
+        speed_diff = target_speed - self.speed
+        self.acceleration_y = max(-max_accel, min(max_accel, speed_diff * 0.3))
         
         # Lateral acceleration (turning)
-        self.acceleration_x = random.uniform(-2.0, 2.0)
+        self.acceleration_x = random.uniform(-lateral_accel_range, lateral_accel_range)
         
         # Vertical acceleration (small, mostly gravity variations)
         self.acceleration_z = random.uniform(-1.0, 1.0)
         
         # Update velocity based on acceleration
         self.speed += self.acceleration_y * dt
-        self.speed = max(0, min(30, self.speed))  # Clamp to 0-30 m/s (0-108 km/h)
+        
+        # Clamp speed based on mode
+        if self.mode == "low_speed":
+            self.speed = max(0, min(10, self.speed))
+        else:  # high_speed
+            self.speed = max(0, min(30, self.speed))
         
         # Update heading based on lateral acceleration (simplified)
         heading_change = (self.acceleration_x / max(self.speed, 1.0)) * dt * 10  # degrees
@@ -222,9 +253,9 @@ class LocationGenerator(DataGenerator):
     """Generates realistic GPS location data using shared motion state"""
     
     def __init__(self, device_id: str, base_lat: float = 37.7749, base_lon: float = -122.4194, 
-                 motion_state: Optional[VehicleMotionState] = None):
+                 motion_state: Optional[MotionState] = None):
         super().__init__(device_id)
-        self.motion_state = motion_state if motion_state else VehicleMotionState(base_lat, base_lon)
+        self.motion_state = motion_state if motion_state else MotionState(base_lat, base_lon)
     
     def generate(self) -> LocationReading:
         # Update motion state (position is updated by physics)
@@ -302,9 +333,9 @@ class HumidityGenerator(DataGenerator):
 class AccelerometerGenerator(DataGenerator):
     """Generates realistic accelerometer data using shared motion state"""
     
-    def __init__(self, device_id: str, motion_state: Optional[VehicleMotionState] = None):
+    def __init__(self, device_id: str, motion_state: Optional[MotionState] = None):
         super().__init__(device_id)
-        self.motion_state = motion_state if motion_state else VehicleMotionState()
+        self.motion_state = motion_state if motion_state else MotionState()
     
     def generate(self) -> AccelerometerReading:
         # Get acceleration from motion state (with small noise)
@@ -501,9 +532,9 @@ class WindSpeedGenerator(DataGenerator):
 class SpeedGenerator(DataGenerator):
     """Generates realistic speed data using shared motion state"""
     
-    def __init__(self, device_id: str, motion_state: Optional[VehicleMotionState] = None):
+    def __init__(self, device_id: str, motion_state: Optional[MotionState] = None):
         super().__init__(device_id)
-        self.motion_state = motion_state if motion_state else VehicleMotionState()
+        self.motion_state = motion_state if motion_state else MotionState()
     
     def generate(self) -> SpeedReading:
         return SpeedReading(
