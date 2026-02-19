@@ -5,8 +5,9 @@ Contains sensor reading data models and data generators
 
 import time
 import random
+import math
 from dataclasses import dataclass, asdict
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 
 # ==================== Data Models ====================
@@ -129,6 +130,82 @@ class FuelConsumptionReading(SensorReading):
     unit: str = "L/h"
 
 
+@dataclass
+class SpeedReading(SensorReading):
+    """Speed sensor data (velocity)"""
+    speed: float  # m/s
+    heading: float  # degrees (0-360, where 0 is North)
+    unit: str = "m/s"
+
+
+# ==================== Vehicle Motion State ====================
+
+class VehicleMotionState:
+    """Shared state for coordinated motion sensors (GPS, Speed, Accelerometer)"""
+    
+    def __init__(self, lat: float = 37.7749, lon: float = -122.4194, altitude: float = 50.0):
+        # Position (GPS)
+        self.latitude = lat
+        self.longitude = lon
+        self.altitude = altitude
+        
+        # Velocity (Speed)
+        self.speed = 0.0  # m/s
+        self.heading = random.uniform(0, 360)  # degrees
+        
+        # Acceleration
+        self.acceleration_x = 0.0  # m/s^2 (lateral)
+        self.acceleration_y = 0.0  # m/s^2 (longitudinal)
+        self.acceleration_z = 0.0  # m/s^2 (vertical)
+    
+    def update(self, dt: float = 5.0):
+        """Update motion state based on physics
+        dt: time interval in seconds (default 5s)
+        """
+        # Generate realistic acceleration changes (simulating vehicle dynamics)
+        # Longitudinal acceleration (speeding up/slowing down)
+        target_speed = random.uniform(5.0, 25.0)  # target speed 5-25 m/s (18-90 km/h)
+        speed_diff = target_speed - self.speed
+        
+        # Limit acceleration to realistic values (-3 to 3 m/s^2)
+        self.acceleration_y = max(-3.0, min(3.0, speed_diff * 0.3))
+        
+        # Lateral acceleration (turning)
+        self.acceleration_x = random.uniform(-2.0, 2.0)
+        
+        # Vertical acceleration (small, mostly gravity variations)
+        self.acceleration_z = random.uniform(-1.0, 1.0)
+        
+        # Update velocity based on acceleration
+        self.speed += self.acceleration_y * dt
+        self.speed = max(0, min(30, self.speed))  # Clamp to 0-30 m/s (0-108 km/h)
+        
+        # Update heading based on lateral acceleration (simplified)
+        heading_change = (self.acceleration_x / max(self.speed, 1.0)) * dt * 10  # degrees
+        self.heading += heading_change
+        self.heading = self.heading % 360
+        
+        # Update GPS position based on velocity
+        # Convert heading to radians (0° = North, 90° = East)
+        heading_rad = math.radians(self.heading)
+        
+        # Calculate displacement
+        distance = self.speed * dt  # meters
+        
+        # Convert to lat/lon changes
+        # 1 degree latitude ≈ 111,320 meters
+        # 1 degree longitude ≈ 111,320 * cos(latitude) meters
+        lat_change = (distance * math.cos(heading_rad)) / 111320
+        lon_change = (distance * math.sin(heading_rad)) / (111320 * math.cos(math.radians(self.latitude)))
+        
+        self.latitude += lat_change
+        self.longitude += lon_change
+        
+        # Small altitude changes
+        self.altitude += random.uniform(-0.5, 0.5)
+        self.altitude = max(0, min(500, self.altitude))
+
+
 # ==================== Data Generators ====================
 
 class DataGenerator:
@@ -142,28 +219,23 @@ class DataGenerator:
 
 
 class LocationGenerator(DataGenerator):
-    """Generates realistic GPS location data"""
+    """Generates realistic GPS location data using shared motion state"""
     
-    def __init__(self, device_id: str, base_lat: float = 37.7749, base_lon: float = -122.4194):
+    def __init__(self, device_id: str, base_lat: float = 37.7749, base_lon: float = -122.4194, 
+                 motion_state: Optional[VehicleMotionState] = None):
         super().__init__(device_id)
-        self.base_lat = base_lat
-        self.base_lon = base_lon
-        self.lat = base_lat
-        self.lon = base_lon
-        self.alt = random.uniform(0, 100)
+        self.motion_state = motion_state if motion_state else VehicleMotionState(base_lat, base_lon)
     
     def generate(self) -> LocationReading:
-        # Simulate movement
-        self.lat += random.uniform(-0.0001, 0.0001)
-        self.lon += random.uniform(-0.0001, 0.0001)
-        self.alt += random.uniform(-0.5, 0.5)
+        # Update motion state (position is updated by physics)
+        self.motion_state.update(dt=5.0)
         
         return LocationReading(
             timestamp=time.time(),
             device_id=self.device_id,
-            latitude=round(self.lat, 6),
-            longitude=round(self.lon, 6),
-            altitude=round(self.alt, 2),
+            latitude=round(self.motion_state.latitude, 6),
+            longitude=round(self.motion_state.longitude, 6),
+            altitude=round(self.motion_state.altitude, 2),
             accuracy=round(random.uniform(1.0, 5.0), 2)
         )
 
@@ -228,18 +300,20 @@ class HumidityGenerator(DataGenerator):
 
 
 class AccelerometerGenerator(DataGenerator):
-    """Generates realistic accelerometer data"""
+    """Generates realistic accelerometer data using shared motion state"""
     
-    def __init__(self, device_id: str):
+    def __init__(self, device_id: str, motion_state: Optional[VehicleMotionState] = None):
         super().__init__(device_id)
+        self.motion_state = motion_state if motion_state else VehicleMotionState()
     
     def generate(self) -> AccelerometerReading:
+        # Get acceleration from motion state (with small noise)
         return AccelerometerReading(
             timestamp=time.time(),
             device_id=self.device_id,
-            x=round(random.uniform(-10, 10), 3),
-            y=round(random.uniform(-10, 10), 3),
-            z=round(random.uniform(-10, 10), 3)
+            x=round(self.motion_state.acceleration_x + random.uniform(-0.1, 0.1), 3),
+            y=round(self.motion_state.acceleration_y + random.uniform(-0.1, 0.1), 3),
+            z=round(self.motion_state.acceleration_z + 9.81 + random.uniform(-0.1, 0.1), 3)  # Include gravity
         )
 
 
@@ -421,6 +495,22 @@ class WindSpeedGenerator(DataGenerator):
             device_id=self.device_id,
             speed=round(self.current_speed, 2),
             direction=round(self.current_direction, 1)
+        )
+
+
+class SpeedGenerator(DataGenerator):
+    """Generates realistic speed data using shared motion state"""
+    
+    def __init__(self, device_id: str, motion_state: Optional[VehicleMotionState] = None):
+        super().__init__(device_id)
+        self.motion_state = motion_state if motion_state else VehicleMotionState()
+    
+    def generate(self) -> SpeedReading:
+        return SpeedReading(
+            timestamp=time.time(),
+            device_id=self.device_id,
+            speed=round(self.motion_state.speed, 2),
+            heading=round(self.motion_state.heading, 1)
         )
 
 

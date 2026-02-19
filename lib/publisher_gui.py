@@ -28,7 +28,8 @@ from lib.sensors import (
     LocationGenerator, TemperatureGenerator, PressureGenerator,
     HumidityGenerator, AccelerometerGenerator, GyroscopeGenerator, CO2Generator,
     FlowGenerator, SoilMoistureGenerator, SoilPHGenerator,
-    LightIntensityGenerator, RainGenerator, WindSpeedGenerator, FuelConsumptionGenerator
+    LightIntensityGenerator, RainGenerator, WindSpeedGenerator, FuelConsumptionGenerator,
+    SpeedGenerator, VehicleMotionState
 )
 
 
@@ -306,7 +307,8 @@ class SimulatorGUI:
         self.sensor_vars = {}
         sensors = [
             ("📍 Location (GPS)", "location"),
-            ("🌡️  Temperature", "temperature"),
+            ("� Speed", "speed"),
+            ("�🌡️  Temperature", "temperature"),
             ("💨 Pressure", "pressure"),
             ("💧 Humidity", "humidity"),
             ("📊 Accelerometer", "accelerometer"),
@@ -642,9 +644,14 @@ class SimulatorGUI:
             device_id = self.device_id_var.get()
             self.simulator = self.simulator_class(device_id)
             
+            # Create shared motion state for coordinated sensors (GPS, speed, accelerometer)
+            motion_state = VehicleMotionState()
+            
             # Add selected sensors
             if self.sensor_vars['location'].get():
-                self.simulator.add_generator('location', LocationGenerator(device_id))
+                self.simulator.add_generator('location', LocationGenerator(device_id, motion_state=motion_state))
+            if self.sensor_vars['speed'].get():
+                self.simulator.add_generator('speed', SpeedGenerator(device_id, motion_state=motion_state))
             if self.sensor_vars['temperature'].get():
                 self.simulator.add_generator('temperature', TemperatureGenerator(device_id))
             if self.sensor_vars['pressure'].get():
@@ -652,7 +659,7 @@ class SimulatorGUI:
             if self.sensor_vars['humidity'].get():
                 self.simulator.add_generator('humidity', HumidityGenerator(device_id))
             if self.sensor_vars['accelerometer'].get():
-                self.simulator.add_generator('accelerometer', AccelerometerGenerator(device_id))
+                self.simulator.add_generator('accelerometer', AccelerometerGenerator(device_id, motion_state=motion_state))
             if self.sensor_vars['gyroscope'].get():
                 self.simulator.add_generator('gyroscope', GyroscopeGenerator(device_id))
             if self.sensor_vars['co2'].get():

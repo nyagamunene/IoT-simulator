@@ -28,7 +28,8 @@ from lib.sensors import (
     SensorReading, LocationReading, TemperatureReading, PressureReading,
     HumidityReading, AccelerometerReading, GyroscopeReading, CO2Reading, FlowReading,
     SoilMoistureReading, SoilPHReading, LightIntensityReading,
-    RainReading, WindSpeedReading, FuelConsumptionReading, DataGenerator
+    RainReading, WindSpeedReading, FuelConsumptionReading, SpeedReading,
+    DataGenerator, VehicleMotionState
 )
 
 # Import actuator classes
