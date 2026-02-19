@@ -145,10 +145,11 @@ class SpeedReading(SensorReading):
 class MotionState:
     """Shared state for coordinated motion sensors (GPS, Speed, Accelerometer)
     
-    Supports three motion modes:
+    Supports four motion modes:
     - stationary: No movement (speed=0, no position changes)
     - low_speed: Low speed movement (0-10 m/s, 0-36 km/h)
-    - high_speed: High speed movement (10-30 m/s, 36-108 km/h)
+    - medium_speed: Medium speed movement (10-30 m/s, 36-108 km/h)
+    - high_speed: High speed movement (30-70 m/s, 108-250 km/h)
     """
     
     def __init__(self, lat: float = 37.7749, lon: float = -122.4194, altitude: float = 50.0, 
@@ -168,7 +169,7 @@ class MotionState:
         self.acceleration_z = 0.0  # m/s^2 (vertical)
         
         # Motion mode
-        self.mode = mode  # "stationary", "low_speed", or "high_speed"
+        self.mode = mode  # "stationary", "low_speed", "medium_speed", or "high_speed"
     
     def update(self, dt: float = 5.0):
         """Update motion state based on physics and current mode
@@ -188,11 +189,19 @@ class MotionState:
             target_speed = random.uniform(2.0, 10.0)
             max_accel = 2.0  # m/s^2
             lateral_accel_range = 1.5
-        else:  # high_speed
-            # High speed: 10-30 m/s (36-108 km/h)
+            max_speed = 10.0
+        elif self.mode == "medium_speed":
+            # Medium speed: 10-30 m/s (36-108 km/h)
             target_speed = random.uniform(10.0, 30.0)
             max_accel = 3.0  # m/s^2
             lateral_accel_range = 2.0
+            max_speed = 30.0
+        else:  # high_speed
+            # High speed: 30-70 m/s (108-250 km/h)
+            target_speed = random.uniform(30.0, 69.4)  # 69.4 m/s = 250 km/h
+            max_accel = 4.0  # m/s^2 (sports car acceleration)
+            lateral_accel_range = 2.5
+            max_speed = 69.4
         
         # Longitudinal acceleration (speeding up/slowing down)
         speed_diff = target_speed - self.speed
@@ -208,10 +217,7 @@ class MotionState:
         self.speed += self.acceleration_y * dt
         
         # Clamp speed based on mode
-        if self.mode == "low_speed":
-            self.speed = max(0, min(10, self.speed))
-        else:  # high_speed
-            self.speed = max(0, min(30, self.speed))
+        self.speed = max(0, min(max_speed, self.speed))
         
         # Update heading based on lateral acceleration (simplified)
         heading_change = (self.acceleration_x / max(self.speed, 1.0)) * dt * 10  # degrees

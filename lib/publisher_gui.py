@@ -371,7 +371,8 @@ class SimulatorGUI:
         motion_modes = [
             ("🛑 Stationary", "stationary"),
             ("🚶 Low Speed (0-36 km/h)", "low_speed"),
-            ("🚗 High Speed (36-108 km/h)", "high_speed")
+            ("� Medium Speed (36-108 km/h)", "medium_speed"),
+            ("🏎️ High Speed (108-250 km/h)", "high_speed")
         ]
         
         for idx, (label, mode) in enumerate(motion_modes):
