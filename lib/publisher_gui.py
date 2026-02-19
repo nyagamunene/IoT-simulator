@@ -730,7 +730,7 @@ class SimulatorGUI:
             if self.sensor_vars['wind'].get():
                 self.simulator.add_generator('wind', WindSpeedGenerator(device_id))
             if self.sensor_vars['fuel'].get():
-                self.simulator.add_generator('fuel', FuelConsumptionGenerator(device_id))
+                self.simulator.add_generator('fuel', FuelConsumptionGenerator(device_id, motion_state=motion_state))
             
             if not any(var.get() for var in self.sensor_vars.values()):
                 messagebox.showerror("Error", "Please select at least one sensor")

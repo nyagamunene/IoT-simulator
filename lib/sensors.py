@@ -548,29 +548,66 @@ class SpeedGenerator(DataGenerator):
 
 
 class FuelConsumptionGenerator(DataGenerator):
-    """Generates realistic fuel consumption data"""
+    """Generates realistic fuel consumption data based on vehicle motion"""
     
-    def __init__(self, device_id: str, tank_capacity: float = 50.0):
+    def __init__(self, device_id: str, tank_capacity: float = 50.0, motion_state: Optional[MotionState] = None):
         super().__init__(device_id)
         self.fuel_level = random.uniform(30, 100)  # Start with 30-100% fuel
         self.total_consumed = 0.0
-        self.consumption_l_100km = random.uniform(6.0, 12.0)  # L/100km (realistic range)
         self.tank_capacity = tank_capacity
+        self.motion_state = motion_state if motion_state else MotionState()
+        self.base_consumption = 6.5  # Base L/100km at optimal conditions
     
     def generate(self) -> FuelConsumptionReading:
-        # Simulate consumption rate changes (driving conditions)
-        self.consumption_l_100km += random.uniform(-0.5, 0.5)
-        self.consumption_l_100km = max(4.0, min(20.0, self.consumption_l_100km))  # 4-20 L/100km range
+        # Get current speed from motion state (m/s to km/h)
+        speed_kmh = self.motion_state.speed * 3.6
+        
+        # Calculate fuel consumption based on speed and acceleration
+        # Realistic consumption model:
+        # - Idle/very low speed: 0.8-1.5 L/h (city traffic)
+        # - Optimal speed (60-80 km/h): 6-8 L/100km
+        # - High speed (>100 km/h): 10-15 L/100km
+        # - Acceleration increases consumption
+        # - Deceleration/coasting reduces consumption
+        
+        if speed_kmh < 1.0:
+            # Idle consumption (convert to L/100km equivalent for consistency)
+            consumption_l_100km = 100.0  # Very high per 100km but actual consumption is low due to no distance
+        elif speed_kmh < 30.0:
+            # City driving - stop and go
+            consumption_l_100km = 8.0 + random.uniform(-0.5, 1.0)
+        elif speed_kmh < 60.0:
+            # Moderate speed - decent efficiency
+            consumption_l_100km = 6.5 + random.uniform(-0.3, 0.8)
+        elif speed_kmh < 90.0:
+            # Optimal speed - best efficiency
+            consumption_l_100km = self.base_consumption + random.uniform(-0.5, 0.5)
+        else:
+            # High speed - increased drag and consumption
+            drag_factor = (speed_kmh - 90.0) / 50.0  # Increases with speed
+            consumption_l_100km = 8.0 + drag_factor * 4.0 + random.uniform(-0.3, 0.8)
+        
+        # Acceleration impact (more throttle = more fuel)
+        accel_impact = abs(self.motion_state.acceleration_y) * 1.5
+        consumption_l_100km += accel_impact
+        
+        # Clamp to realistic range
+        consumption_l_100km = max(4.0, min(20.0, consumption_l_100km))
         
         # Convert L/100km to MPG (US gallons)
         # Formula: MPG = 235.215 / (L/100km)
-        consumption_mpg = 235.215 / self.consumption_l_100km
+        consumption_mpg = 235.215 / consumption_l_100km
         
-        # Calculate fuel consumed since last reading (assuming 5 second intervals)
-        # Assume average speed of 50 km/h for calculation
+        # Calculate actual fuel consumed since last reading (5 second intervals)
         interval_hours = 5.0 / 3600.0  # 5 seconds in hours
-        distance_km = 50.0 * interval_hours  # distance traveled at 50 km/h
-        consumed_this_interval = (self.consumption_l_100km / 100.0) * distance_km
+        distance_km = speed_kmh * interval_hours  # actual distance traveled
+        
+        # Fuel consumed this interval
+        if distance_km > 0:
+            consumed_this_interval = (consumption_l_100km / 100.0) * distance_km
+        else:
+            # Idle consumption: ~0.8 L/h
+            consumed_this_interval = 0.8 * interval_hours
         
         # Update total and fuel level
         self.total_consumed += consumed_this_interval
@@ -580,7 +617,7 @@ class FuelConsumptionGenerator(DataGenerator):
         return FuelConsumptionReading(
             timestamp=time.time(),
             device_id=self.device_id,
-            consumption_l_100km=round(self.consumption_l_100km, 2),
+            consumption_l_100km=round(consumption_l_100km, 2),
             consumption_mpg=round(consumption_mpg, 1),
             fuel_level=round(self.fuel_level, 1),
             total_consumed=round(self.total_consumed, 3)
