@@ -124,10 +124,12 @@ class WindSpeedReading(SensorReading):
 @dataclass
 class FuelConsumptionReading(SensorReading):
     """Fuel consumption sensor data"""
-    consumption_rate: float  # L/h or L/100km
+    consumption_l_100km: float  # Liters per 100 kilometers (metric)
+    consumption_mpg: float  # Miles per gallon (imperial/US)
     fuel_level: float  # percentage (0-100)
     total_consumed: float  # total liters consumed
-    unit: str = "L/h"
+    metric_unit: str = "L/100km"
+    imperial_unit: str = "MPG"
 
 
 @dataclass
@@ -552,28 +554,34 @@ class FuelConsumptionGenerator(DataGenerator):
         super().__init__(device_id)
         self.fuel_level = random.uniform(30, 100)  # Start with 30-100% fuel
         self.total_consumed = 0.0
-        self.consumption_rate = random.uniform(5.0, 15.0)  # L/h
+        self.consumption_l_100km = random.uniform(6.0, 12.0)  # L/100km (realistic range)
         self.tank_capacity = tank_capacity
     
     def generate(self) -> FuelConsumptionReading:
-        # Simulate consumption rate changes (engine load variation)
-        self.consumption_rate += random.uniform(-1.0, 1.0)
-        self.consumption_rate = max(3.0, min(25.0, self.consumption_rate))
+        # Simulate consumption rate changes (driving conditions)
+        self.consumption_l_100km += random.uniform(-0.5, 0.5)
+        self.consumption_l_100km = max(4.0, min(20.0, self.consumption_l_100km))  # 4-20 L/100km range
+        
+        # Convert L/100km to MPG (US gallons)
+        # Formula: MPG = 235.215 / (L/100km)
+        consumption_mpg = 235.215 / self.consumption_l_100km
         
         # Calculate fuel consumed since last reading (assuming 5 second intervals)
+        # Assume average speed of 50 km/h for calculation
         interval_hours = 5.0 / 3600.0  # 5 seconds in hours
-        consumed_this_interval = self.consumption_rate * interval_hours
+        distance_km = 50.0 * interval_hours  # distance traveled at 50 km/h
+        consumed_this_interval = (self.consumption_l_100km / 100.0) * distance_km
         
         # Update total and fuel level
         self.total_consumed += consumed_this_interval
-        fuel_consumed_liters = consumed_this_interval
-        fuel_level_decrease = (fuel_consumed_liters / self.tank_capacity) * 100
+        fuel_level_decrease = (consumed_this_interval / self.tank_capacity) * 100
         self.fuel_level = max(0, self.fuel_level - fuel_level_decrease)
         
         return FuelConsumptionReading(
             timestamp=time.time(),
             device_id=self.device_id,
-            consumption_rate=round(self.consumption_rate, 2),
+            consumption_l_100km=round(self.consumption_l_100km, 2),
+            consumption_mpg=round(consumption_mpg, 1),
             fuel_level=round(self.fuel_level, 1),
             total_consumed=round(self.total_consumed, 3)
         )

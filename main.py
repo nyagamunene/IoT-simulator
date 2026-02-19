@@ -64,17 +64,82 @@ except ImportError:
     HTTP_AVAILABLE = False
 
 
+# ==================== Unit Converter ====================
+
+class UnitConverter:
+    """Converts sensor values between metric and imperial units"""
+    
+    @staticmethod
+    def temperature(celsius: float, to_imperial: bool = False) -> tuple:
+        """Convert temperature. Returns (value, unit)"""
+        if to_imperial:
+            fahrenheit = (celsius * 9/5) + 32
+            return round(fahrenheit, 2), "°F"
+        return round(celsius, 2), "°C"
+    
+    @staticmethod
+    def pressure(hpa: float, to_imperial: bool = False) -> tuple:
+        """Convert pressure. Returns (value, unit)"""
+        if to_imperial:
+            inhg = hpa * 0.02953
+            return round(inhg, 2), "inHg"
+        return round(hpa, 2), "hPa"
+    
+    @staticmethod
+    def speed(ms: float, to_imperial: bool = False) -> tuple:
+        """Convert speed from m/s. Returns (value, unit)"""
+        if to_imperial:
+            mph = ms * 2.23694
+            return round(mph, 1), "mph"
+        # Return km/h for metric (more common than m/s)
+        kmh = ms * 3.6
+        return round(kmh, 1), "km/h"
+    
+    @staticmethod
+    def altitude(meters: float, to_imperial: bool = False) -> tuple:
+        """Convert altitude. Returns (value, unit)"""
+        if to_imperial:
+            feet = meters * 3.28084
+            return round(feet, 1), "ft"
+        return round(meters, 1), "m"
+    
+    @staticmethod
+    def rainfall(mmh: float, to_imperial: bool = False) -> tuple:
+        """Convert rainfall rate. Returns (value, unit)"""
+        if to_imperial:
+            inh = mmh * 0.03937
+            return round(inh, 2), "in/h"
+        return round(mmh, 2), "mm/h"
+    
+    @staticmethod
+    def flow_rate(lpm: float, to_imperial: bool = False) -> tuple:
+        """Convert flow rate. Returns (value, unit)"""
+        if to_imperial:
+            gpm = lpm * 0.264172
+            return round(gpm, 2), "gal/min"
+        return round(lpm, 2), "L/min"
+    
+    @staticmethod
+    def volume(liters: float, to_imperial: bool = False) -> tuple:
+        """Convert volume. Returns (value, unit)"""
+        if to_imperial:
+            gallons = liters * 0.264172
+            return round(gallons, 2), "gal"
+        return round(liters, 2), "L"
+
+
 # ==================== Format Encoders ====================
 
 class SenMLEncoder:
     """Encodes sensor data in SenML (RFC 8428) format"""
     
     @staticmethod
-    def encode(reading: SensorReading, base_name: str = "") -> List[Dict[str, Any]]:
-        """Convert a sensor reading to SenML format"""
+    def encode(reading: SensorReading, base_name: str = "", unit_system: str = "metric") -> List[Dict[str, Any]]:
+        """Convert a sensor reading to SenML format with unit conversion"""
         senml_pack = []
         # Convert timestamp to nanoseconds (integer)
         base_time = int(reading.timestamp * 1_000_000_000)
+        to_imperial = (unit_system == "imperial")
         
         if isinstance(reading, LocationReading):
             # Format coordinates as JSON string for vs (string value) field
@@ -82,17 +147,20 @@ class SenMLEncoder:
                 "latitude": reading.latitude,
                 "longitude": reading.longitude
             }, ensure_ascii=False)
+            alt_value, alt_unit = UnitConverter.altitude(reading.altitude, to_imperial)
             senml_pack = [
                 {"n": "coordinates", "bt": base_time, "vs": coordinates_json},
-                {"n": "altitude", "u": "m", "v": reading.altitude}
+                {"n": "altitude", "u": alt_unit, "v": alt_value}
             ]
         elif isinstance(reading, TemperatureReading):
+            temp_value, temp_unit = UnitConverter.temperature(reading.temperature, to_imperial)
             senml_pack = [
-                {"n": "temperature", "bu": "°C", "u": "°C", "bt": base_time, "v": reading.temperature}
+                {"n": "temperature", "bu": temp_unit, "u": temp_unit, "bt": base_time, "v": temp_value}
             ]
         elif isinstance(reading, PressureReading):
+            press_value, press_unit = UnitConverter.pressure(reading.pressure, to_imperial)
             senml_pack = [
-                {"n": "pressure", "bu": "hPa", "u": "hPa", "bt": base_time, "v": reading.pressure}
+                {"n": "pressure", "bu": press_unit, "u": press_unit, "bt": base_time, "v": press_value}
             ]
         elif isinstance(reading, HumidityReading):
             senml_pack = [
@@ -115,9 +183,11 @@ class SenMLEncoder:
                 {"n": "co2", "bu": "ppm", "u": "ppm", "bt": base_time, "v": reading.co2_ppm}
             ]
         elif isinstance(reading, FlowReading):
+            flow_value, flow_unit = UnitConverter.flow_rate(reading.flow_rate, to_imperial)
+            vol_value, vol_unit = UnitConverter.volume(reading.total_volume, to_imperial)
             senml_pack = [
-                {"n": "flow_rate", "bu": "L/min", "u": "L/min", "bt": base_time, "v": reading.flow_rate},
-                {"n": "total_volume", "u": "L", "v": reading.total_volume}
+                {"n": "flow_rate", "bu": flow_unit, "u": flow_unit, "bt": base_time, "v": flow_value},
+                {"n": "total_volume", "u": vol_unit, "v": vol_value}
             ]
         elif isinstance(reading, SoilMoistureReading):
             senml_pack = [
@@ -132,25 +202,37 @@ class SenMLEncoder:
                 {"n": "light", "bu": "lx", "u": "lx", "bt": base_time, "v": reading.intensity}
             ]
         elif isinstance(reading, RainReading):
+            rain_value, rain_unit = UnitConverter.rainfall(reading.rainfall, to_imperial)
             senml_pack = [
-                {"n": "rainfall", "bu": "mm/h", "u": "mm/h", "bt": base_time, "v": reading.rainfall}
+                {"n": "rainfall", "bu": rain_unit, "u": rain_unit, "bt": base_time, "v": rain_value}
             ]
         elif isinstance(reading, WindSpeedReading):
+            wind_value, wind_unit = UnitConverter.speed(reading.speed, to_imperial)
             senml_pack = [
-                {"n": "wind_speed", "bu": "m/s", "u": "m/s", "bt": base_time, "v": reading.speed},
+                {"n": "wind_speed", "bu": wind_unit, "u": wind_unit, "bt": base_time, "v": wind_value},
                 {"n": "wind_direction", "u": "deg", "v": reading.direction}
             ]
         elif isinstance(reading, SpeedReading):
+            speed_value, speed_unit = UnitConverter.speed(reading.speed, to_imperial)
             senml_pack = [
-                {"n": "speed", "bu": "m/s", "u": "m/s", "bt": base_time, "v": reading.speed},
+                {"n": "speed", "bu": speed_unit, "u": speed_unit, "bt": base_time, "v": speed_value},
                 {"n": "heading", "u": "deg", "v": reading.heading}
             ]
         elif isinstance(reading, FuelConsumptionReading):
-            senml_pack = [
-                {"n": "fuel_consumption_rate", "bu": "L/h", "u": "L/h", "bt": base_time, "v": reading.consumption_rate},
-                {"n": "fuel_level", "u": "%", "v": reading.fuel_level},
-                {"n": "fuel_total_consumed", "u": "L", "v": reading.total_consumed}
-            ]
+            # Fuel consumption already has both units, select based on system
+            if to_imperial:
+                total_vol, vol_unit = UnitConverter.volume(reading.total_consumed, to_imperial)
+                senml_pack = [
+                    {"n": "fuel_consumption", "bu": "MPG", "u": "MPG", "bt": base_time, "v": reading.consumption_mpg},
+                    {"n": "fuel_level", "u": "%", "v": reading.fuel_level},
+                    {"n": "fuel_total_consumed", "u": vol_unit, "v": total_vol}
+                ]
+            else:
+                senml_pack = [
+                    {"n": "fuel_consumption", "bu": "L/100km", "u": "L/100km", "bt": base_time, "v": reading.consumption_l_100km},
+                    {"n": "fuel_level", "u": "%", "v": reading.fuel_level},
+                    {"n": "fuel_total_consumed", "u": "L", "v": reading.total_consumed}
+                ]
         
         return senml_pack
 
@@ -571,6 +653,7 @@ class IoTDeviceSimulator:
         self.actuators: Dict[str, Actuator] = {}
         self.protocol_handler: Optional[ProtocolHandler] = None
         self.format_encoder = JSONEncoder
+        self.unit_system = "metric"  # Default to metric
         self.running = False
         self.thread = None
         self.interval = 5.0  # seconds
@@ -653,6 +736,12 @@ class IoTDeviceSimulator:
         else:
             raise ValueError(f"Unsupported format: {format_type}")
     
+    def set_unit_system(self, unit_system: str):
+        """Set the unit system (metric or imperial)"""
+        if unit_system.lower() not in ['metric', 'imperial']:
+            raise ValueError(f"Unsupported unit system: {unit_system}")
+        self.unit_system = unit_system.lower()
+    
     def start(self):
         """Start the simulator"""
         if self.running:
@@ -695,7 +784,7 @@ class IoTDeviceSimulator:
                     
                     # Encode the data
                     if self.format_encoder == SenMLEncoder:
-                        encoded = SenMLEncoder.encode(reading, base_name=name)
+                        encoded = SenMLEncoder.encode(reading, base_name=name, unit_system=self.unit_system)
                         # Add all records to the senml_records list
                         senml_records.extend(encoded)
                     else:

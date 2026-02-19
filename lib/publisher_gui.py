@@ -323,6 +323,16 @@ class SimulatorGUI:
         self.password_var = tk.StringVar(value="")
         ttk.Entry(config_frame, textvariable=self.password_var, width=10, show="*").grid(row=1, column=3, sticky=tk.W, pady=2)
         
+        # Unit System Selection
+        ttk.Label(config_frame, text="Unit System:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.unit_system_var = tk.StringVar(value="metric")
+        unit_frame = ttk.Frame(config_frame)
+        unit_frame.grid(row=2, column=1, sticky=tk.W, pady=2)
+        ttk.Radiobutton(unit_frame, text="Metric (°C, km/h, L/100km)", variable=self.unit_system_var, 
+                       value="metric").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(unit_frame, text="Imperial (°F, mph, MPG)", variable=self.unit_system_var, 
+                       value="imperial").pack(side=tk.LEFT)
+        
         # Sensor Selection
         sensor_frame = ttk.LabelFrame(main_frame, text="Sensors", padding="10")
         sensor_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N), pady=5, padx=(0, 5))
@@ -762,6 +772,9 @@ class SimulatorGUI:
             # Set format
             self.simulator.set_format(self.format_var.get())
             
+            # Set unit system
+            self.simulator.set_unit_system(self.unit_system_var.get())
+            
             # Set interval
             self.simulator.interval = float(self.interval_var.get())
             
@@ -1161,6 +1174,7 @@ class SimulatorGUI:
         self.client_cert_var.trace_add('write', save_callback)
         self.client_key_var.trace_add('write', save_callback)
         self.motion_mode_var.trace_add('write', save_callback)
+        self.unit_system_var.trace_add('write', save_callback)
         
         # Add traces to sensor checkboxes
         for var in self.sensor_vars.values():
@@ -1181,6 +1195,7 @@ class SimulatorGUI:
                 'client_cert': self.client_cert_var.get(),
                 'client_key': self.client_key_var.get(),
                 'motion_mode': self.motion_mode_var.get(),
+                'unit_system': self.unit_system_var.get(),
                 'sensors': {key: var.get() for key, var in self.sensor_vars.items()}
             }
             
@@ -1253,6 +1268,8 @@ class SimulatorGUI:
                 self.client_key_var.set(config['client_key'])
             if 'motion_mode' in config:
                 self.motion_mode_var.set(config['motion_mode'])
+            if 'unit_system' in config:
+                self.unit_system_var.set(config['unit_system'])
             
             # Restore sensor selections
             if 'sensors' in config:
