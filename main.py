@@ -29,6 +29,8 @@ from lib.sensors import (
     HumidityReading, AccelerometerReading, GyroscopeReading, CO2Reading, FlowReading,
     SoilMoistureReading, SoilPHReading, LightIntensityReading,
     RainReading, WindSpeedReading, FuelConsumptionReading, SpeedReading,
+    WaterMeterReading, WaterPHReading, WaterTurbidityReading,
+    WaterTDSReading, ChlorineReading,
     DataGenerator, MotionState
 )
 
@@ -233,6 +235,31 @@ class SenMLEncoder:
                     {"n": "fuel_level", "u": "%", "v": reading.fuel_level},
                     {"n": "fuel_total_consumed", "u": "L", "v": reading.total_consumed}
                 ]
+        elif isinstance(reading, WaterMeterReading):
+            flow_value, flow_unit = UnitConverter.flow_rate(reading.flow_rate, to_imperial)
+            vol_value, vol_unit = UnitConverter.volume(reading.cumulative_volume * 1000, to_imperial)  # m³ → L
+            senml_pack = [
+                {"n": "water_flow_rate", "bu": flow_unit, "u": flow_unit, "bt": base_time, "v": flow_value},
+                {"n": "water_cumulative_volume", "u": vol_unit, "v": vol_value},
+                {"n": "water_leak_detected", "u": "/", "vb": reading.leak_detected}
+            ]
+        elif isinstance(reading, WaterPHReading):
+            senml_pack = [
+                {"n": "water_ph", "bu": "pH", "u": "pH", "bt": base_time, "v": reading.ph}
+            ]
+        elif isinstance(reading, WaterTurbidityReading):
+            senml_pack = [
+                {"n": "water_turbidity", "bu": "NTU", "u": "NTU", "bt": base_time, "v": reading.turbidity}
+            ]
+        elif isinstance(reading, WaterTDSReading):
+            senml_pack = [
+                {"n": "water_tds", "bu": "ppm", "u": "ppm", "bt": base_time, "v": reading.tds},
+                {"n": "water_conductivity", "u": "uS/cm", "v": reading.conductivity}
+            ]
+        elif isinstance(reading, ChlorineReading):
+            senml_pack = [
+                {"n": "chlorine", "bu": "mg/L", "u": "mg/L", "bt": base_time, "v": reading.chlorine}
+            ]
         
         return senml_pack
 

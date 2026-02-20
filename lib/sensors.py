@@ -140,6 +140,44 @@ class SpeedReading(SensorReading):
     unit: str = "m/s"
 
 
+@dataclass
+class WaterMeterReading(SensorReading):
+    """Water meter sensor data"""
+    flow_rate: float       # L/min
+    cumulative_volume: float  # m³ (total consumed)
+    leak_detected: bool    # simple leak flag
+    unit: str = "L/min"
+
+
+@dataclass
+class WaterPHReading(SensorReading):
+    """Water pH sensor data"""
+    ph: float
+    unit: str = "pH"
+
+
+@dataclass
+class WaterTurbidityReading(SensorReading):
+    """Water turbidity sensor data (clarity)"""
+    turbidity: float   # NTU (Nephelometric Turbidity Units)
+    unit: str = "NTU"
+
+
+@dataclass
+class WaterTDSReading(SensorReading):
+    """Water Total Dissolved Solids sensor data"""
+    tds: float         # ppm (parts per million)
+    conductivity: float  # μS/cm
+    unit: str = "ppm"
+
+
+@dataclass
+class ChlorineReading(SensorReading):
+    """Chlorine level sensor data"""
+    chlorine: float    # mg/L (ppm)
+    unit: str = "mg/L"
+
+
 # ==================== Motion State ====================
 
 class MotionState:
@@ -627,4 +665,135 @@ class FuelConsumptionGenerator(DataGenerator):
             consumption_mpg=round(consumption_mpg, 1),
             fuel_level=round(self.fuel_level, 1),
             total_consumed=round(self.total_consumed, 3)
+        )
+
+
+# ==================== Water Metering Generators ====================
+
+class WaterMeterGenerator(DataGenerator):
+    """Generates realistic water meter data with daily usage patterns"""
+
+    def __init__(self, device_id: str, pipe_diameter_mm: float = 25.0):
+        super().__init__(device_id)
+        self.pipe_diameter_mm = pipe_diameter_mm
+        self.cumulative_volume = 0.0   # m³
+        self._prev_flow = 0.0
+        self._tick = 0
+
+    def generate(self) -> WaterMeterReading:
+        import datetime
+        hour = datetime.datetime.now().hour
+
+        # Demand profile: low at night, peak morning (7-9) and evening (18-21)
+        if 0 <= hour < 5:
+            base_flow = random.uniform(0.0, 0.2)          # near-zero overnight
+        elif 5 <= hour < 7:
+            base_flow = random.uniform(0.5, 2.0)          # early morning ramp
+        elif 7 <= hour < 9:
+            base_flow = random.uniform(5.0, 15.0)         # morning peak
+        elif 9 <= hour < 12:
+            base_flow = random.uniform(1.0, 5.0)          # mid-morning
+        elif 12 <= hour < 14:
+            base_flow = random.uniform(2.0, 8.0)          # lunch
+        elif 14 <= hour < 17:
+            base_flow = random.uniform(1.0, 4.0)          # afternoon
+        elif 17 <= hour < 21:
+            base_flow = random.uniform(4.0, 12.0)         # evening peak
+        else:
+            base_flow = random.uniform(0.2, 1.0)          # night wind-down
+
+        # Smooth transitions from previous reading
+        flow_rate = round(0.6 * self._prev_flow + 0.4 * base_flow + random.uniform(-0.2, 0.2), 3)
+        flow_rate = max(0.0, flow_rate)
+        self._prev_flow = flow_rate
+
+        # Accumulate volume (5-second intervals → /12 per minute)
+        interval_min = 5.0 / 60.0
+        self.cumulative_volume += (flow_rate * interval_min) / 1000.0  # L → m³
+
+        # Leak detection: sustained low-but-nonzero flow at night is suspicious
+        leak_detected = (0 <= hour < 5) and (flow_rate > 0.5)
+
+        return WaterMeterReading(
+            timestamp=time.time(),
+            device_id=self.device_id,
+            flow_rate=flow_rate,
+            cumulative_volume=round(self.cumulative_volume, 6),
+            leak_detected=leak_detected
+        )
+
+
+class WaterPHGenerator(DataGenerator):
+    """Generates realistic water pH readings (drinking water range)"""
+
+    def __init__(self, device_id: str, base_ph: float = 7.4):
+        super().__init__(device_id)
+        self.ph = base_ph
+
+    def generate(self) -> WaterPHReading:
+        # Small drift with slow mean-reversion to base
+        drift = random.gauss(0, 0.03)
+        self.ph = round(max(6.5, min(8.5, self.ph + drift)), 2)
+        return WaterPHReading(
+            timestamp=time.time(),
+            device_id=self.device_id,
+            ph=self.ph
+        )
+
+
+class WaterTurbidityGenerator(DataGenerator):
+    """Generates realistic water turbidity readings (NTU)"""
+
+    def __init__(self, device_id: str):
+        super().__init__(device_id)
+        self.turbidity = random.uniform(0.1, 1.0)
+
+    def generate(self) -> WaterTurbidityReading:
+        # Occasional spikes simulating sediment disturbance
+        if random.random() < 0.05:
+            self.turbidity = random.uniform(2.0, 8.0)
+        else:
+            self.turbidity = max(0.05, self.turbidity + random.gauss(0, 0.05))
+            self.turbidity = min(self.turbidity, 4.0)  # WHO limit ~4 NTU
+        return WaterTurbidityReading(
+            timestamp=time.time(),
+            device_id=self.device_id,
+            turbidity=round(self.turbidity, 3)
+        )
+
+
+class WaterTDSGenerator(DataGenerator):
+    """Generates realistic Total Dissolved Solids and conductivity readings"""
+
+    def __init__(self, device_id: str, base_tds: float = 150.0):
+        super().__init__(device_id)
+        self.tds = base_tds  # ppm
+
+    def generate(self) -> WaterTDSReading:
+        drift = random.gauss(0, 1.5)
+        self.tds = round(max(50.0, min(500.0, self.tds + drift)), 1)
+        # Conductivity ≈ TDS × 2 (μS/cm), rough approximation
+        conductivity = round(self.tds * 2.0 + random.uniform(-5, 5), 1)
+        return WaterTDSReading(
+            timestamp=time.time(),
+            device_id=self.device_id,
+            tds=self.tds,
+            conductivity=max(0.0, conductivity)
+        )
+
+
+class ChlorineGenerator(DataGenerator):
+    """Generates realistic chlorine level readings (mg/L)"""
+
+    def __init__(self, device_id: str, base_chlorine: float = 0.8):
+        super().__init__(device_id)
+        self.chlorine = base_chlorine
+
+    def generate(self) -> ChlorineReading:
+        drift = random.gauss(0, 0.02)
+        self.chlorine = round(max(0.1, min(2.0, self.chlorine + drift)), 3)
+        return ChlorineReading(
+            timestamp=time.time(),
+            device_id=self.device_id,
+            chlorine=self.chlorine
         )

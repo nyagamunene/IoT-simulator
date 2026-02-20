@@ -29,7 +29,9 @@ from lib.sensors import (
     HumidityGenerator, AccelerometerGenerator, GyroscopeGenerator, CO2Generator,
     FlowGenerator, SoilMoistureGenerator, SoilPHGenerator,
     LightIntensityGenerator, RainGenerator, WindSpeedGenerator, FuelConsumptionGenerator,
-    SpeedGenerator, MotionState
+    SpeedGenerator, MotionState,
+    WaterMeterGenerator, WaterPHGenerator, WaterTurbidityGenerator,
+    WaterTDSGenerator, ChlorineGenerator
 )
 
 
@@ -377,26 +379,51 @@ class SimulatorGUI:
         self.sensor_vars = {}
         sensors = [
             ("📍 Location (GPS)", "location"),
-            ("� Speed", "speed"),
-            ("�🌡️  Temperature", "temperature"),
+            ("🚗 Speed", "speed"),
+            ("🌡️ Temperature", "temperature"),
             ("💨 Pressure", "pressure"),
             ("💧 Humidity", "humidity"),
             ("📊 Accelerometer", "accelerometer"),
             ("🔄 Gyroscope", "gyroscope"),
-            ("🌫️  CO2 (PPM)", "co2"),
+            ("🌫️ CO2 (PPM)", "co2"),
             ("🚰 Flow Rate", "flow"),
             ("🌱 Soil Moisture", "soil_moisture"),
             ("🧪 Soil pH", "soil_ph"),
             ("💡 Light Intensity", "light"),
-            ("🌧️  Rain", "rain"),
+            ("🌧️ Rain", "rain"),
             ("💨 Wind Speed", "wind"),
-            ("⛽ Fuel Consumption", "fuel")
+            ("⛽ Fuel Consumption", "fuel"),
         ]
-        
-        for i, (label, key) in enumerate(sensors):
-            var = tk.BooleanVar(value=True if key == 'temperature' else False)
+        water_sensors = [
+            ("💧 Water Meter", "water_meter"),
+            ("🧪 Water pH", "water_ph"),
+            ("🌊 Water Turbidity", "water_turbidity"),
+            ("⚗️ Water TDS / Conductivity", "water_tds"),
+            ("🔬 Chlorine Level", "chlorine"),
+        ]
+
+        row = 0
+        for label, key in sensors:
+            var = tk.BooleanVar(value=False)
             self.sensor_vars[key] = var
-            ttk.Checkbutton(scrollable_sensor_frame, text=label, variable=var).grid(row=i, column=0, sticky=tk.W, pady=2)
+            ttk.Checkbutton(scrollable_sensor_frame, text=label, variable=var).grid(
+                row=row, column=0, sticky=tk.W, pady=2)
+            row += 1
+
+        # Water metering section header + sensors
+        ttk.Separator(scrollable_sensor_frame, orient=tk.HORIZONTAL).grid(
+            row=row, column=0, sticky=(tk.W, tk.E), pady=(8, 2))
+        row += 1
+        ttk.Label(scrollable_sensor_frame, text="── Water Metering ──",
+                  font=("TkDefaultFont", 8, "bold"), foreground="gray").grid(
+            row=row, column=0, sticky=tk.W, pady=(0, 4))
+        row += 1
+        for label, key in water_sensors:
+            var = tk.BooleanVar(value=False)
+            self.sensor_vars[key] = var
+            ttk.Checkbutton(scrollable_sensor_frame, text=label, variable=var).grid(
+                row=row, column=0, sticky=tk.W, pady=2)
+            row += 1
         
         # Protocol Configuration
         protocol_frame = ttk.LabelFrame(main_frame, text="Protocol Configuration", padding="10")
@@ -783,6 +810,16 @@ class SimulatorGUI:
                 self.simulator.add_generator('wind', WindSpeedGenerator(device_id))
             if self.sensor_vars['fuel'].get():
                 self.simulator.add_generator('fuel', FuelConsumptionGenerator(device_id, motion_state=motion_state))
+            if self.sensor_vars['water_meter'].get():
+                self.simulator.add_generator('water_meter', WaterMeterGenerator(device_id))
+            if self.sensor_vars['water_ph'].get():
+                self.simulator.add_generator('water_ph', WaterPHGenerator(device_id))
+            if self.sensor_vars['water_turbidity'].get():
+                self.simulator.add_generator('water_turbidity', WaterTurbidityGenerator(device_id))
+            if self.sensor_vars['water_tds'].get():
+                self.simulator.add_generator('water_tds', WaterTDSGenerator(device_id))
+            if self.sensor_vars['chlorine'].get():
+                self.simulator.add_generator('chlorine', ChlorineGenerator(device_id))
             
             if not any(var.get() for var in self.sensor_vars.values()):
                 messagebox.showerror("Error", "Please select at least one sensor")
