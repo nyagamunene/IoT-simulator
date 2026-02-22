@@ -374,8 +374,8 @@ class MQTTSubscriberGUI:
         if not c.winfo_exists():
             return
         c.delete("static")
-        W = c.winfo_width()  or 800
-        H = c.winfo_height() or 350
+        W = max(c.winfo_width(), 200)
+        H = max(c.winfo_height(), 200)
         cy     = H // 2
         pipe_h = max(28, H // 9)
         vx     = W // 2           # valve centre x
@@ -468,8 +468,8 @@ class MQTTSubscriberGUI:
             return
 
         c  = self.pipe_canvas
-        W  = c.winfo_width()  or 800
-        H  = c.winfo_height() or 350
+        W  = max(c.winfo_width(), 200)
+        H  = max(c.winfo_height(), 200)
         cy = H // 2
         ph = max(28, H // 9)   # pipe half-height
         vx = W // 2
@@ -819,22 +819,28 @@ class MQTTSubscriberGUI:
         try:
             # Try to decode payload as UTF-8
             payload = msg.payload.decode('utf-8')
-            
-            # Parse actuator messages to update visualization
-            self._parse_actuator_message(topic, payload)
+        except Exception:
+            payload = f"<binary: {msg.payload.hex()}>"
 
-            # Parse flow / pipeline sensor values
-            self._parse_flow_message(payload)
-            
+        if not payload.startswith('<binary'):
+            # Parse actuator messages to update visualization
+            try:
+                self._parse_actuator_message(topic, payload)
+            except Exception:
+                pass
+
+            # Parse flow / pipeline sensor values (outside broad except so errors surface)
+            try:
+                self._parse_flow_message(payload)
+            except Exception:
+                pass
+
             # Try to pretty-print JSON
             try:
                 json_obj = json.loads(payload)
                 payload = json.dumps(json_obj, indent=2)
-            except:
+            except Exception:
                 pass  # Not JSON, use as-is
-        except:
-            # If decode fails, show as hex
-            payload = f"<binary: {msg.payload.hex()}>"
         
         # Display message
         self.messages_text.config(state=tk.NORMAL)
