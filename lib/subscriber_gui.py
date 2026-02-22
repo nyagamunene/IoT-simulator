@@ -698,35 +698,51 @@ class MQTTSubscriberGUI:
         except:
             pass  # Not actuator message or invalid JSON
 
-    def _parse_flow_message(self, payload_str: str):
+    def _parse_flow_message(self, payload_str: str, topic: str = ""):
         """Extract a flow/analog value from any SenML or JSON message and update the pipeline."""
         if not hasattr(self, 'flow_state'):
             return
         field = self.flow_state.get('sensor_label', 'water_flow_rate')
-        try:
-            data = json.loads(payload_str)
-        except Exception:
-            return
 
         value = None
         leak  = False
 
-        # SenML array: [{...}, {"n": "flow_rate", "v": 3.14}, ...]
-        if isinstance(data, list):
-            for record in data:
-                if isinstance(record, dict):
-                    n = record.get('n', '')
-                    if n == field and 'v' in record:
-                        value = float(record['v'])
-                    elif n == 'leak_detected' and record.get('vb') is True:
-                        leak = True
-                    elif n == 'leak_detected' and 'v' in record:
-                        leak = bool(record['v'])
-        # Flat JSON object: {"flow_rate": 3.14, ...}
-        elif isinstance(data, dict):
-            if field in data:
-                value = float(data[field])
-            leak = bool(data.get('leak_detected', False))
+        try:
+            data = json.loads(payload_str.strip())
+        except Exception:
+            # Try parsing as a raw number string (e.g. payload = "0.25")
+            try:
+                value = float(payload_str.strip())
+                data = None
+            except Exception:
+                return
+
+        if data is not None:
+            # SenML array: [{"n": "water_flow_rate", "v": 0.25}, ...]
+            if isinstance(data, list):
+                for record in data:
+                    if isinstance(record, dict):
+                        n = record.get('n', '')
+                        if n == field and 'v' in record:
+                            value = float(record['v'])
+                        elif n in ('water_leak_detected', 'leak_detected') and record.get('vb') is True:
+                            leak = True
+                        elif n in ('water_leak_detected', 'leak_detected') and 'v' in record:
+                            leak = bool(record['v'])
+            # Flat JSON object: {"water_flow_rate": 0.25, ...}
+            elif isinstance(data, dict):
+                if field in data:
+                    value = float(data[field])
+                leak = bool(data.get('water_leak_detected', data.get('leak_detected', False)))
+            # Bare JSON number — valid only if the topic contains the field name
+            elif isinstance(data, (int, float)):
+                if field in topic or not topic:
+                    value = float(data)
+
+        # If value came from a bare number payload, only use it when topic matches field
+        if value is not None and data is None:
+            if topic and field not in topic:
+                return
 
         if value is not None:
             self.root.after(0, lambda v=value, lk=leak: self._set_pipe_flow(v, lk))
@@ -832,7 +848,7 @@ class MQTTSubscriberGUI:
 
             # Parse flow / pipeline sensor values (outside broad except so errors surface)
             try:
-                self._parse_flow_message(payload)
+                self._parse_flow_message(payload, topic)
             except Exception:
                 pass
 
