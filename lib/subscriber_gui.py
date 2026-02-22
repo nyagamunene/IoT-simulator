@@ -92,7 +92,7 @@ class MQTTSubscriberGUI:
             'leak': False,
             'particles': [],
             'anim_id': None,
-            'sensor_label': 'flow_rate',
+            'sensor_label': 'water_flow_rate',
         }
 
         self._create_menu()
@@ -287,7 +287,7 @@ class MQTTSubscriberGUI:
         ctrl_frame.pack(fill=tk.X, pady=(0, 8))
 
         ttk.Label(ctrl_frame, text="Watch field:").grid(row=0, column=0, sticky=tk.W, padx=5)
-        self.pipe_field_var = tk.StringVar(value="flow_rate")
+        self.pipe_field_var = tk.StringVar(value="water_flow_rate")
         field_combo = ttk.Combobox(
             ctrl_frame, textvariable=self.pipe_field_var,
             values=["flow_rate", "water_flow_rate", "speed", "wind_speed"],
@@ -701,7 +701,7 @@ class MQTTSubscriberGUI:
         """Extract a flow/analog value from any SenML or JSON message and update the pipeline."""
         if not hasattr(self, 'flow_state'):
             return
-        field = self.flow_state.get('sensor_label', 'flow_rate')
+        field = self.flow_state.get('sensor_label', 'water_flow_rate')
         try:
             data = json.loads(payload_str)
         except Exception:
