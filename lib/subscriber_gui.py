@@ -87,7 +87,7 @@ class MQTTSubscriberGUI:
         # Pipeline / flow animation state
         self.flow_state = {
             'flow_rate': 0.0,
-            'max_flow': 20.0,
+            'max_flow': 2.0,
             'valve_pct': 0.0,
             'leak': False,
             'particles': [],
@@ -300,7 +300,7 @@ class MQTTSubscriberGUI:
         )
 
         ttk.Label(ctrl_frame, text="Max scale (L/min):").grid(row=0, column=2, sticky=tk.W, padx=(20, 5))
-        self.pipe_max_var = tk.StringVar(value="20")
+        self.pipe_max_var = tk.StringVar(value="2")
         ttk.Entry(ctrl_frame, textvariable=self.pipe_max_var, width=8).grid(row=0, column=3, sticky=tk.W)
         self.pipe_max_var.trace_add('write', lambda *_: self._update_pipe_max())
 
@@ -482,9 +482,10 @@ class MQTTSubscriberGUI:
         c.delete("particle")
         self._draw_pipe()
 
-        # spawn new particle
+        # spawn new particle — always guarantee at least one when flow > 0
         if pct > 0 and W > 10:
-            if random.random() < min(1.0, pct * 1.5):
+            spawn_chance = max(0.25, min(1.0, pct * 3.0))
+            if random.random() < spawn_chance:
                 half = ph // 2 - 4
                 py    = cy + random.randint(-half, half)
                 speed = 2 + pct * 9
