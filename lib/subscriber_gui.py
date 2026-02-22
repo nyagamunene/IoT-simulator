@@ -83,7 +83,18 @@ class MQTTSubscriberGUI:
             'relay': {'on': False, 'topic': 'iot/actuators/relay'},
             'thermostat': {'target_temp': 22, 'mode': 'off', 'topic': 'iot/actuators/thermostat'}
         }
-        
+
+        # Pipeline / flow animation state
+        self.flow_state = {
+            'flow_rate': 0.0,
+            'max_flow': 20.0,
+            'valve_pct': 0.0,
+            'leak': False,
+            'particles': [],
+            'anim_id': None,
+            'sensor_label': 'flow_rate',
+        }
+
         self._create_menu()
         self._create_widgets()
         self._load_config()
@@ -120,15 +131,18 @@ class MQTTSubscriberGUI:
         connection_tab = ttk.Frame(self.notebook)
         messages_tab = ttk.Frame(self.notebook)
         actuators_tab = ttk.Frame(self.notebook)
-        
+        pipeline_tab = ttk.Frame(self.notebook)
+
         self.notebook.add(connection_tab, text="🔌 Connection")
         self.notebook.add(messages_tab, text="📨 Messages")
         self.notebook.add(actuators_tab, text="⚡ Actuators")
-        
+        self.notebook.add(pipeline_tab, text="🔧 Pipeline")
+
         # Populate tabs
         self._create_connection_tab(connection_tab)
         self._create_messages_tab(messages_tab)
         self._create_actuators_tab(actuators_tab)
+        self._create_pipeline_tab(pipeline_tab)
     
     def _create_connection_tab(self, parent):
         """Create connection configuration tab"""
@@ -259,7 +273,246 @@ class MQTTSubscriberGUI:
         
         # Detachable log window reference
         self.detached_log_window = None
-    
+
+    # ── pipeline tab ────────────────────────────────────────────────────────
+
+    def _create_pipeline_tab(self, parent):
+        """Animated pipe / valve visualisation driven by live sensor flow values."""
+        import random
+        main_frame = ttk.Frame(parent, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # ── top controls ────────────────────────────────────────────────────
+        ctrl_frame = ttk.LabelFrame(main_frame, text="Sensor Field Mapping", padding="8")
+        ctrl_frame.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(ctrl_frame, text="Watch field:").grid(row=0, column=0, sticky=tk.W, padx=5)
+        self.pipe_field_var = tk.StringVar(value="flow_rate")
+        field_combo = ttk.Combobox(
+            ctrl_frame, textvariable=self.pipe_field_var,
+            values=["flow_rate", "water_flow_rate", "speed", "wind_speed"],
+            state="readonly", width=20
+        )
+        field_combo.grid(row=0, column=1, sticky=tk.W, padx=5)
+        field_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda e: self.flow_state.update({'sensor_label': self.pipe_field_var.get()})
+        )
+
+        ttk.Label(ctrl_frame, text="Max scale (L/min):").grid(row=0, column=2, sticky=tk.W, padx=(20, 5))
+        self.pipe_max_var = tk.StringVar(value="20")
+        ttk.Entry(ctrl_frame, textvariable=self.pipe_max_var, width=8).grid(row=0, column=3, sticky=tk.W)
+        self.pipe_max_var.trace_add('write', lambda *_: self._update_pipe_max())
+
+        # ── live readout ─────────────────────────────────────────────────────
+        info_frame = ttk.Frame(main_frame)
+        info_frame.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(info_frame, text="Flow Rate:").pack(side=tk.LEFT, padx=(0, 4))
+        self.pipe_rate_var = tk.StringVar(value="–")
+        ttk.Label(info_frame, textvariable=self.pipe_rate_var,
+                  font=("TkDefaultFont", 11, "bold")).pack(side=tk.LEFT, padx=(0, 20))
+
+        ttk.Label(info_frame, text="Valve:").pack(side=tk.LEFT, padx=(0, 4))
+        self.pipe_valve_var = tk.StringVar(value="CLOSED")
+        ttk.Label(info_frame, textvariable=self.pipe_valve_var,
+                  font=("TkDefaultFont", 11, "bold")).pack(side=tk.LEFT, padx=(0, 20))
+
+        ttk.Label(info_frame, text="Leak:").pack(side=tk.LEFT, padx=(0, 4))
+        self.pipe_leak_var = tk.StringVar(value="No")
+        ttk.Label(info_frame, textvariable=self.pipe_leak_var,
+                  font=("TkDefaultFont", 11, "bold")).pack(side=tk.LEFT)
+
+        # ── canvas ───────────────────────────────────────────────────────────
+        canvas_frame = ttk.LabelFrame(main_frame, text="Pipeline View", padding="5")
+        canvas_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.pipe_canvas = tk.Canvas(canvas_frame, bg="#1a1a2e", highlightthickness=0)
+        self.pipe_canvas.pack(fill=tk.BOTH, expand=True)
+        self.pipe_canvas.bind("<Configure>", lambda e: self._draw_pipe())
+
+        # ── manual override buttons ──────────────────────────────────────────
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(btn_frame, text="Force Open",
+                   command=lambda: self._set_pipe_flow(self.flow_state['max_flow'])).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Force Close",
+                   command=lambda: self._set_pipe_flow(0.0)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Simulate Leak",
+                   command=lambda: self._set_pipe_flow(0.5, leak=True)).pack(side=tk.LEFT, padx=5)
+
+        # kick off animation
+        self._animate_pipe()
+
+    def _update_pipe_max(self):
+        try:
+            self.flow_state['max_flow'] = float(self.pipe_max_var.get())
+        except ValueError:
+            pass
+
+    def _set_pipe_flow(self, rate: float, leak: bool = False):
+        """Update flow state (called from sensor parsing or manual buttons)."""
+        max_flow = self.flow_state['max_flow']
+        pct = min(1.0, rate / max_flow) if max_flow > 0 else 0.0
+        self.flow_state.update({
+            'flow_rate': rate,
+            'valve_pct': pct,
+            'leak': leak,
+        })
+        self.pipe_rate_var.set(f"{rate:.2f} L/min")
+        if rate <= 0:
+            self.pipe_valve_var.set("CLOSED")
+        elif pct >= 0.99:
+            self.pipe_valve_var.set("FULLY OPEN")
+        else:
+            self.pipe_valve_var.set(f"{int(pct * 100)}% OPEN")
+        self.pipe_leak_var.set("⚠ LEAK DETECTED" if leak else "No")
+
+    def _draw_pipe(self):
+        """Render the static pipe and valve onto pipe_canvas."""
+        c = self.pipe_canvas
+        if not c.winfo_exists():
+            return
+        c.delete("static")
+        W = c.winfo_width()  or 800
+        H = c.winfo_height() or 350
+        cy     = H // 2
+        pipe_h = max(28, H // 9)
+        vx     = W // 2           # valve centre x
+        vr     = pipe_h           # valve radius
+
+        # Background
+        c.create_rectangle(0, 0, W, H, fill="#1a1a2e", outline="", tags="static")
+
+        # ── left pipe ────────────────────────────────────────────────────────
+        c.create_rectangle(0, cy - pipe_h // 2, vx - vr, cy + pipe_h // 2,
+                           fill="#3a5a7a", outline="#5a8aaa", width=2, tags="static")
+        c.create_rectangle(0, cy - pipe_h // 2 + 3, vx - vr, cy - pipe_h // 2 + 8,
+                           fill="#6aaacc", outline="", tags="static")
+
+        # ── right pipe ───────────────────────────────────────────────────────
+        c.create_rectangle(vx + vr, cy - pipe_h // 2, W, cy + pipe_h // 2,
+                           fill="#3a5a7a", outline="#5a8aaa", width=2, tags="static")
+        c.create_rectangle(vx + vr, cy - pipe_h // 2 + 3, W, cy - pipe_h // 2 + 8,
+                           fill="#6aaacc", outline="", tags="static")
+
+        # ── valve ────────────────────────────────────────────────────────────
+        pct  = self.flow_state['valve_pct']
+        leak = self.flow_state['leak']
+        if pct >= 0.99:
+            fill = "#00cc44"
+        elif pct > 0:
+            fill = "#ffaa00"
+        elif leak:
+            fill = "#ff3300"
+        else:
+            fill = "#992200"
+
+        c.create_oval(vx - vr, cy - vr, vx + vr, cy + vr,
+                      fill="#222233", outline="#aaaacc", width=3, tags="static")
+        disc_r = int(vr * 0.65)
+        c.create_oval(vx - disc_r, cy - disc_r, vx + disc_r, cy + disc_r,
+                      fill=fill, outline="#ffffff", width=2, tags="static")
+
+        # handle: horizontal = open, vertical = closed
+        if pct > 0.5:
+            c.create_line(vx - disc_r, cy, vx + disc_r, cy,
+                          fill="white", width=4, tags="static")
+        else:
+            c.create_line(vx, cy - disc_r, vx, cy + disc_r,
+                          fill="white", width=4, tags="static")
+
+        # spindle
+        c.create_rectangle(vx - 5, cy - vr - 25, vx + 5, cy - vr,
+                           fill="#888888", outline="#aaaaaa", tags="static")
+        c.create_oval(vx - 12, cy - vr - 36, vx + 12, cy - vr - 14,
+                      fill="#555566", outline="#aaaacc", width=2, tags="static")
+
+        # ── flow gauge (right edge) ───────────────────────────────────────────
+        gx = W - 55;  gy = 35;  gh = H - 75
+        bar_h = int(gh * pct)
+        bar_color = "#ffaa00" if leak else "#00aaff"
+        c.create_rectangle(gx, gy, gx + 28, gy + gh,
+                           fill="#222233", outline="#5555aa", width=2, tags="static")
+        if bar_h > 0:
+            c.create_rectangle(gx + 2, gy + gh - bar_h, gx + 26, gy + gh,
+                               fill=bar_color, outline="", tags="static")
+        c.create_text(gx + 14, gy + gh + 14, text="Flow",
+                      fill="#aaaacc", font=("TkDefaultFont", 8), tags="static")
+        c.create_text(gx + 14, gy - 12,
+                      text=f"{self.flow_state['flow_rate']:.1f}",
+                      fill="#ffffff", font=("TkDefaultFont", 9, "bold"), tags="static")
+
+        # ── status label ─────────────────────────────────────────────────────
+        if leak:
+            status, color = "⚠ LEAK DETECTED", "#ff4400"
+        elif pct >= 0.99:
+            status, color = "FULLY OPEN", "#00cc44"
+        elif pct > 0:
+            status, color = f"{int(pct*100)}% OPEN", "#ffaa00"
+        else:
+            status, color = "CLOSED", "#cc2200"
+        c.create_text(vx, cy + vr + 22, text=status,
+                      fill=color, font=("TkDefaultFont", 11, "bold"), tags="static")
+
+        # IN / OUT labels
+        c.create_text(50, cy, text="IN",  fill="#aaaacc",
+                      font=("TkDefaultFont", 10, "bold"), tags="static")
+        c.create_text(W - 90, cy, text="OUT", fill="#aaaacc",
+                      font=("TkDefaultFont", 10, "bold"), tags="static")
+
+    def _animate_pipe(self):
+        """Continuous 20 fps animation loop for water particles."""
+        import random
+        if not hasattr(self, 'pipe_canvas') or not self.pipe_canvas.winfo_exists():
+            return
+
+        c  = self.pipe_canvas
+        W  = c.winfo_width()  or 800
+        H  = c.winfo_height() or 350
+        cy = H // 2
+        ph = max(28, H // 9)   # pipe half-height
+        vx = W // 2
+        vr = ph
+
+        pct  = self.flow_state['valve_pct']
+        leak = self.flow_state['leak']
+
+        # delete old particles then redraw static layer
+        c.delete("particle")
+        self._draw_pipe()
+
+        # spawn new particle
+        if pct > 0 and W > 10:
+            if random.random() < min(1.0, pct * 1.5):
+                half = ph // 2 - 4
+                py    = cy + random.randint(-half, half)
+                speed = 2 + pct * 9
+                self.flow_state['particles'].append({'x': 5.0, 'y': float(py), 'speed': speed})
+
+        # advance + draw
+        alive = []
+        for p in self.flow_state['particles']:
+            # block / slow at closed valve
+            if vx - vr < p['x'] < vx + vr:
+                if pct < 0.05 and not leak:
+                    p['speed'] = 0
+                elif pct < 0.5:
+                    p['speed'] = max(0.5, p['speed'] * 0.85)
+            p['x'] += p['speed']
+            x, y = p['x'], p['y']
+            if x < W - 4:
+                alive.append(p)
+                fill = "#00aaff" if x < vx else ("#ff6600" if leak else "#00ffcc")
+                r = 4
+                c.create_oval(x - r, y - r, x + r, y + r,
+                              fill=fill, outline="", tags="particle")
+
+        self.flow_state['particles'] = alive
+        self.flow_state['anim_id'] = self.root.after(50, self._animate_pipe)
+
+    # ── actuators tab ────────────────────────────────────────────────────────
+
     def _create_actuators_tab(self, parent):
         """Create actuators control tab"""
         main_frame = ttk.Frame(parent, padding="10")
@@ -443,7 +696,40 @@ class MQTTSubscriberGUI:
                 self._draw_actuators()
         except:
             pass  # Not actuator message or invalid JSON
-    
+
+    def _parse_flow_message(self, payload_str: str):
+        """Extract a flow/analog value from any SenML or JSON message and update the pipeline."""
+        if not hasattr(self, 'flow_state'):
+            return
+        field = self.flow_state.get('sensor_label', 'flow_rate')
+        try:
+            data = json.loads(payload_str)
+        except Exception:
+            return
+
+        value = None
+        leak  = False
+
+        # SenML array: [{...}, {"n": "flow_rate", "v": 3.14}, ...]
+        if isinstance(data, list):
+            for record in data:
+                if isinstance(record, dict):
+                    n = record.get('n', '')
+                    if n == field and 'v' in record:
+                        value = float(record['v'])
+                    elif n == 'leak_detected' and record.get('vb') is True:
+                        leak = True
+                    elif n == 'leak_detected' and 'v' in record:
+                        leak = bool(record['v'])
+        # Flat JSON object: {"flow_rate": 3.14, ...}
+        elif isinstance(data, dict):
+            if field in data:
+                value = float(data[field])
+            leak = bool(data.get('leak_detected', False))
+
+        if value is not None:
+            self.root.after(0, lambda v=value, lk=leak: self._set_pipe_flow(v, lk))
+
     def _on_connect(self, client, userdata, flags, rc):
         """Callback when connected to broker"""
         if rc == 0:
@@ -536,6 +822,9 @@ class MQTTSubscriberGUI:
             
             # Parse actuator messages to update visualization
             self._parse_actuator_message(topic, payload)
+
+            # Parse flow / pipeline sensor values
+            self._parse_flow_message(payload)
             
             # Try to pretty-print JSON
             try:

@@ -162,7 +162,6 @@ class WaterTurbidityReading(SensorReading):
     turbidity: float   # NTU (Nephelometric Turbidity Units)
     unit: str = "NTU"
 
-
 @dataclass
 class WaterTDSReading(SensorReading):
     """Water Total Dissolved Solids sensor data"""
@@ -170,13 +169,11 @@ class WaterTDSReading(SensorReading):
     conductivity: float  # μS/cm
     unit: str = "ppm"
 
-
 @dataclass
 class ChlorineReading(SensorReading):
     """Chlorine level sensor data"""
     chlorine: float    # mg/L (ppm)
     unit: str = "mg/L"
-
 
 # ==================== Motion State ====================
 

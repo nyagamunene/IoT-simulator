@@ -393,8 +393,6 @@ class SimulatorGUI:
             ("🌧️ Rain", "rain"),
             ("💨 Wind Speed", "wind"),
             ("⛽ Fuel Consumption", "fuel"),
-        ]
-        water_sensors = [
             ("💧 Water Meter", "water_meter"),
             ("🧪 Water pH", "water_ph"),
             ("🌊 Water Turbidity", "water_turbidity"),
@@ -402,28 +400,11 @@ class SimulatorGUI:
             ("🔬 Chlorine Level", "chlorine"),
         ]
 
-        row = 0
-        for label, key in sensors:
+        for i, (label, key) in enumerate(sensors):
             var = tk.BooleanVar(value=False)
             self.sensor_vars[key] = var
             ttk.Checkbutton(scrollable_sensor_frame, text=label, variable=var).grid(
-                row=row, column=0, sticky=tk.W, pady=2)
-            row += 1
-
-        # Water metering section header + sensors
-        ttk.Separator(scrollable_sensor_frame, orient=tk.HORIZONTAL).grid(
-            row=row, column=0, sticky=(tk.W, tk.E), pady=(8, 2))
-        row += 1
-        ttk.Label(scrollable_sensor_frame, text="── Water Metering ──",
-                  font=("TkDefaultFont", 8, "bold"), foreground="gray").grid(
-            row=row, column=0, sticky=tk.W, pady=(0, 4))
-        row += 1
-        for label, key in water_sensors:
-            var = tk.BooleanVar(value=False)
-            self.sensor_vars[key] = var
-            ttk.Checkbutton(scrollable_sensor_frame, text=label, variable=var).grid(
-                row=row, column=0, sticky=tk.W, pady=2)
-            row += 1
+                row=i, column=0, sticky=tk.W, pady=2)
         
         # Protocol Configuration
         protocol_frame = ttk.LabelFrame(main_frame, text="Protocol Configuration", padding="10")
