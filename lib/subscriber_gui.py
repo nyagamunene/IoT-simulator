@@ -88,10 +88,29 @@ class MQTTSubscriberGUI:
         self._create_widgets()
         self._load_config()
         self._setup_auto_save()
-        
+
+        # Force text widget colors AFTER ttkbootstrap theme is applied
+        self.root.after(100, self._force_text_colors)
+
         # Save config on window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
     
+    def _force_text_colors(self):
+        """Re-apply white background on text widgets after ttkbootstrap theme overrides."""
+        white_widgets = []
+        if hasattr(self, 'messages_text'):
+            white_widgets.append(self.messages_text)
+        if hasattr(self, 'topics_text'):
+            white_widgets.append(self.topics_text)
+        for w in white_widgets:
+            w.configure(bg='white', fg='black', insertbackground='black')
+        # Re-apply message tags so they show on white background
+        if hasattr(self, 'messages_text'):
+            self.messages_text.tag_config('timestamp', foreground='#555555')
+            self.messages_text.tag_config('topic', foreground='#0055cc',
+                                          font=('TkDefaultFont', 9, 'bold'))
+            self.messages_text.tag_config('payload', foreground='#111111')
+
     def _create_menu(self):
         """Create menu bar"""
         menubar = tk.Menu(self.root)
@@ -851,6 +870,8 @@ class MQTTSubscriberGUI:
             if style:
                 style.theme_use(theme_name)
                 self._log_message(f"Theme changed to: {theme_name}")
+                # Re-apply our text widget colors after theme resets them
+                self.root.after(100, self._force_text_colors)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to change theme: {e}")
     
