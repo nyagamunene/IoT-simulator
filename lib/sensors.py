@@ -668,48 +668,41 @@ class FuelConsumptionGenerator(DataGenerator):
 # ==================== Water Metering Generators ====================
 
 class WaterMeterGenerator(DataGenerator):
-    """Generates realistic water meter data with daily usage patterns"""
+    """Generates water meter data — 5 safe readings then 5 unsafe (burst/leak), repeating."""
+
+    # Unsafe threshold from Go script: flow_rate >= 50.0 L/min = burst pipe
+    SAFE_READINGS   = 5
+    UNSAFE_READINGS = 5
 
     def __init__(self, device_id: str, pipe_diameter_mm: float = 25.0):
         super().__init__(device_id)
-        self.pipe_diameter_mm = pipe_diameter_mm
-        self.cumulative_volume = 0.0   # m³
-        self._prev_flow = 0.0
-        self._tick = 0
+        self.pipe_diameter_mm    = pipe_diameter_mm
+        self.cumulative_volume   = 0.0   # m³
+        self._prev_flow          = 0.0
+        self._reading_count      = 0
+
+    def _is_unsafe_phase(self) -> bool:
+        cycle = self.SAFE_READINGS + self.UNSAFE_READINGS
+        return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> WaterMeterReading:
-        import datetime
-        hour = datetime.datetime.now().hour
+        self._reading_count += 1
+        unsafe = self._is_unsafe_phase()
 
-        # Demand profile: low at night, peak morning (7-9) and evening (18-21)
-        if 0 <= hour < 5:
-            base_flow = random.uniform(0.0, 0.2)          # near-zero overnight
-        elif 5 <= hour < 7:
-            base_flow = random.uniform(0.5, 2.0)          # early morning ramp
-        elif 7 <= hour < 9:
-            base_flow = random.uniform(5.0, 15.0)         # morning peak
-        elif 9 <= hour < 12:
-            base_flow = random.uniform(1.0, 5.0)          # mid-morning
-        elif 12 <= hour < 14:
-            base_flow = random.uniform(2.0, 8.0)          # lunch
-        elif 14 <= hour < 17:
-            base_flow = random.uniform(1.0, 4.0)          # afternoon
-        elif 17 <= hour < 21:
-            base_flow = random.uniform(4.0, 12.0)         # evening peak
+        if unsafe:
+            # Burst pipe: flow_rate >= 50.0 L/min triggers valve close
+            flow_rate      = round(random.uniform(50.0, 80.0), 3)
+            leak_detected  = True
         else:
-            base_flow = random.uniform(0.2, 1.0)          # night wind-down
+            # Normal residential flow: 0.5 – 15 L/min
+            base_flow  = random.uniform(0.5, 8.0)
+            flow_rate  = round(0.6 * self._prev_flow + 0.4 * base_flow + random.uniform(-0.1, 0.1), 3)
+            flow_rate  = max(0.0, min(flow_rate, 49.0))
+            leak_detected = False
 
-        # Smooth transitions from previous reading
-        flow_rate = round(0.6 * self._prev_flow + 0.4 * base_flow + random.uniform(-0.2, 0.2), 3)
-        flow_rate = max(0.0, flow_rate)
         self._prev_flow = flow_rate
-
-        # Accumulate volume (5-second intervals → /12 per minute)
         interval_min = 5.0 / 60.0
         self.cumulative_volume += (flow_rate * interval_min) / 1000.0  # L → m³
-
-        # Leak detection: sustained low-but-nonzero flow at night is suspicious
-        leak_detected = (0 <= hour < 5) and (flow_rate > 0.5)
 
         return WaterMeterReading(
             timestamp=time.time(),
@@ -721,16 +714,34 @@ class WaterMeterGenerator(DataGenerator):
 
 
 class WaterPHGenerator(DataGenerator):
-    """Generates realistic water pH readings (drinking water range)"""
+    """Generates water pH — 5 safe readings (6.5–8.5) then 5 unsafe (< 6.5 or > 8.5)."""
+
+    SAFE_READINGS   = 5
+    UNSAFE_READINGS = 5
 
     def __init__(self, device_id: str, base_ph: float = 7.4):
         super().__init__(device_id)
-        self.ph = base_ph
+        self.ph              = base_ph
+        self._reading_count  = 0
+
+    def _is_unsafe_phase(self) -> bool:
+        cycle = self.SAFE_READINGS + self.UNSAFE_READINGS
+        return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> WaterPHReading:
-        # Small drift with slow mean-reversion to base
-        drift = random.gauss(0, 0.03)
-        self.ph = round(max(6.5, min(8.5, self.ph + drift)), 2)
+        self._reading_count += 1
+        unsafe = self._is_unsafe_phase()
+
+        if unsafe:
+            # Alternate between acidic (< 6.5) and alkaline (> 8.5) events
+            if (self._reading_count // (self.SAFE_READINGS + self.UNSAFE_READINGS)) % 2 == 0:
+                self.ph = round(random.uniform(4.5, 6.4), 2)   # too acidic
+            else:
+                self.ph = round(random.uniform(8.6, 10.0), 2)  # too alkaline
+        else:
+            drift   = random.gauss(0, 0.03)
+            self.ph = round(max(6.5, min(8.5, self.ph + drift)), 2)
+
         return WaterPHReading(
             timestamp=time.time(),
             device_id=self.device_id,
@@ -739,37 +750,65 @@ class WaterPHGenerator(DataGenerator):
 
 
 class WaterTurbidityGenerator(DataGenerator):
-    """Generates realistic water turbidity readings (NTU)"""
+    """Generates turbidity — 5 safe readings (< 4.0 NTU) then 5 unsafe (>= 4.0 NTU)."""
+
+    SAFE_READINGS   = 5
+    UNSAFE_READINGS = 5
 
     def __init__(self, device_id: str):
         super().__init__(device_id)
-        self.turbidity = random.uniform(0.1, 1.0)
+        self.turbidity       = random.uniform(0.1, 1.0)
+        self._reading_count  = 0
+
+    def _is_unsafe_phase(self) -> bool:
+        cycle = self.SAFE_READINGS + self.UNSAFE_READINGS
+        return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> WaterTurbidityReading:
-        # Occasional spikes simulating sediment disturbance
-        if random.random() < 0.05:
-            self.turbidity = random.uniform(2.0, 8.0)
+        self._reading_count += 1
+        unsafe = self._is_unsafe_phase()
+
+        if unsafe:
+            # High turbidity: >= 4.0 NTU (contamination event)
+            self.turbidity = round(random.uniform(4.0, 12.0), 3)
         else:
             self.turbidity = max(0.05, self.turbidity + random.gauss(0, 0.05))
-            self.turbidity = min(self.turbidity, 4.0)  # WHO limit ~4 NTU
+            self.turbidity = round(min(self.turbidity, 3.9), 3)
+
         return WaterTurbidityReading(
             timestamp=time.time(),
             device_id=self.device_id,
-            turbidity=round(self.turbidity, 3)
+            turbidity=self.turbidity
         )
 
 
 class WaterTDSGenerator(DataGenerator):
-    """Generates realistic Total Dissolved Solids and conductivity readings"""
+    """Generates TDS/conductivity — 5 safe readings then 5 unsafe (TDS >= 1000 ppm)."""
+
+    SAFE_READINGS   = 5
+    UNSAFE_READINGS = 5
 
     def __init__(self, device_id: str, base_tds: float = 150.0):
         super().__init__(device_id)
-        self.tds = base_tds  # ppm
+        self.tds             = base_tds  # ppm
+        self._reading_count  = 0
+
+    def _is_unsafe_phase(self) -> bool:
+        cycle = self.SAFE_READINGS + self.UNSAFE_READINGS
+        return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> WaterTDSReading:
-        drift = random.gauss(0, 1.5)
-        self.tds = round(max(50.0, min(500.0, self.tds + drift)), 1)
-        # Conductivity ≈ TDS × 2 (μS/cm), rough approximation
+        self._reading_count += 1
+        unsafe = self._is_unsafe_phase()
+
+        if unsafe:
+            # TDS >= 1000 ppm → not suitable for drinking
+            # Conductivity >= 1500 µS/cm → critical contamination
+            self.tds    = round(random.uniform(1000.0, 1800.0), 1)
+        else:
+            drift    = random.gauss(0, 1.5)
+            self.tds = round(max(50.0, min(999.0, self.tds + drift)), 1)
+
         conductivity = round(self.tds * 2.0 + random.uniform(-5, 5), 1)
         return WaterTDSReading(
             timestamp=time.time(),
@@ -780,15 +819,34 @@ class WaterTDSGenerator(DataGenerator):
 
 
 class ChlorineGenerator(DataGenerator):
-    """Generates realistic chlorine level readings (mg/L)"""
+    """Generates chlorine — 5 safe readings (0.1–4.0 mg/L) then 5 unsafe (< 0.1 or >= 4.0)."""
+
+    SAFE_READINGS   = 5
+    UNSAFE_READINGS = 5
 
     def __init__(self, device_id: str, base_chlorine: float = 0.8):
         super().__init__(device_id)
-        self.chlorine = base_chlorine
+        self.chlorine        = base_chlorine
+        self._reading_count  = 0
+
+    def _is_unsafe_phase(self) -> bool:
+        cycle = self.SAFE_READINGS + self.UNSAFE_READINGS
+        return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> ChlorineReading:
-        drift = random.gauss(0, 0.02)
-        self.chlorine = round(max(0.1, min(2.0, self.chlorine + drift)), 3)
+        self._reading_count += 1
+        unsafe = self._is_unsafe_phase()
+
+        if unsafe:
+            # Alternate under-chlorinated and over-chlorinated events
+            if (self._reading_count // (self.SAFE_READINGS + self.UNSAFE_READINGS)) % 2 == 0:
+                self.chlorine = round(random.uniform(0.0, 0.09), 3)   # too low → bacteria risk
+            else:
+                self.chlorine = round(random.uniform(4.0, 6.0), 3)    # too high → chemical risk
+        else:
+            drift         = random.gauss(0, 0.02)
+            self.chlorine = round(max(0.1, min(3.99, self.chlorine + drift)), 3)
+
         return ChlorineReading(
             timestamp=time.time(),
             device_id=self.device_id,
