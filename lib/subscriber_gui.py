@@ -208,7 +208,7 @@ class MQTTSubscriberGUI:
         topics_scrolled = ttk.Frame(topics_frame)
         topics_scrolled.pack(fill=tk.X, pady=5)
         
-        self.topics_text = tk.Text(topics_scrolled, height=3, width=80)
+        self.topics_text = tk.Text(topics_scrolled, height=3, width=80, bg='white', fg='black')
         self.topics_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         scrollbar = ttk.Scrollbar(topics_scrolled, orient=tk.VERTICAL, command=self.topics_text.yview)
@@ -249,13 +249,16 @@ class MQTTSubscriberGUI:
         messages_frame = ttk.LabelFrame(main_frame, text="Received Messages", padding="10")
         messages_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.messages_text = scrolledtext.ScrolledText(messages_frame, height=35, width=120, state=tk.DISABLED, wrap=tk.WORD)
+        self.messages_text = scrolledtext.ScrolledText(
+            messages_frame, height=35, width=120, state=tk.DISABLED, wrap=tk.WORD,
+            bg='white', fg='black'
+        )
         self.messages_text.pack(fill=tk.BOTH, expand=True)
-        
+
         # Configure text tags for colored output
-        self.messages_text.tag_config('timestamp', foreground='gray')
-        self.messages_text.tag_config('topic', foreground='blue', font=('TkDefaultFont', 9, 'bold'))
-        self.messages_text.tag_config('payload', foreground='black')
+        self.messages_text.tag_config('timestamp', foreground='#555555')
+        self.messages_text.tag_config('topic', foreground='#0055cc', font=('TkDefaultFont', 9, 'bold'))
+        self.messages_text.tag_config('payload', foreground='#111111')
         
         # Detachable log window reference
         self.detached_log_window = None
@@ -794,10 +797,12 @@ class MQTTSubscriberGUI:
         log_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         self.detached_log_window.log_text = scrolledtext.ScrolledText(
-            log_frame, 
-            wrap=tk.WORD, 
+            log_frame,
+            wrap=tk.WORD,
             state=tk.DISABLED,
-            font=('Courier', 10)
+            font=('Courier', 10),
+            bg='white',
+            fg='black'
         )
         self.detached_log_window.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
