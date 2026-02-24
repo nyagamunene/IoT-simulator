@@ -315,22 +315,43 @@ class LocationGenerator(DataGenerator):
 
 
 class TemperatureGenerator(DataGenerator):
-    """Generates realistic temperature data"""
-    
-    def __init__(self, device_id: str, base_temp: float = 22.0):
+    """
+    Cold-chain / cargo temperature sensor.
+    Go thresholds: >8°C or <2°C → alarm. >=12°C → sev4, >=20°C → sev5.
+    Cycles: 5 safe readings (3–7 °C) then 5 unsafe readings (>8 or <2 °C).
+    """
+    SAFE_READINGS   = 5
+    UNSAFE_READINGS = 5
+
+    def __init__(self, device_id: str, base_temp: float = 5.0):
         super().__init__(device_id)
-        self.base_temp = base_temp
-        self.current_temp = base_temp
-    
+        self.current_temp   = base_temp
+        self._reading_count = 0
+
+    def _is_unsafe_phase(self) -> bool:
+        cycle = self.SAFE_READINGS + self.UNSAFE_READINGS
+        return (self._reading_count % cycle) >= self.SAFE_READINGS
+
     def generate(self) -> TemperatureReading:
-        # Simulate temperature fluctuation
-        self.current_temp += random.uniform(-0.5, 0.5)
-        self.current_temp = max(-20, min(50, self.current_temp))
-        
+        self._reading_count += 1
+        unsafe = self._is_unsafe_phase()
+        cycle_num = (self._reading_count - 1) // (self.SAFE_READINGS + self.UNSAFE_READINGS)
+
+        if unsafe:
+            # Alternate: even cycles → too warm (severity 3→5), odd → too cold (severity 3)
+            if cycle_num % 2 == 0:
+                self.current_temp = round(random.uniform(9.0, 25.0), 2)  # >8 triggers alarm
+            else:
+                self.current_temp = round(random.uniform(-2.0, 1.9),  2)  # <2 triggers alarm
+        else:
+            # Safe: 3–7 °C, small drift
+            drift = random.uniform(-0.2, 0.2)
+            self.current_temp = round(max(3.0, min(7.0, self.current_temp + drift)), 2)
+
         return TemperatureReading(
             timestamp=time.time(),
             device_id=self.device_id,
-            temperature=round(self.current_temp, 2)
+            temperature=self.current_temp
         )
 
 
@@ -355,39 +376,89 @@ class PressureGenerator(DataGenerator):
 
 
 class HumidityGenerator(DataGenerator):
-    """Generates realistic humidity data"""
-    
-    def __init__(self, device_id: str, base_humidity: float = 60.0):
+    """
+    Cargo-hold humidity sensor.
+    Go thresholds: >60% or <30% → alarm. >=70.2% → sev4, >=79.8% → sev5.
+    Cycles: 5 safe readings (32–58%) then 5 unsafe (>60% or <30%).
+    """
+    SAFE_READINGS   = 5
+    UNSAFE_READINGS = 5
+
+    def __init__(self, device_id: str, base_humidity: float = 45.0):
         super().__init__(device_id)
         self.current_humidity = base_humidity
-    
+        self._reading_count   = 0
+
+    def _is_unsafe_phase(self) -> bool:
+        cycle = self.SAFE_READINGS + self.UNSAFE_READINGS
+        return (self._reading_count % cycle) >= self.SAFE_READINGS
+
     def generate(self) -> HumidityReading:
-        # Simulate humidity fluctuation
-        self.current_humidity += random.uniform(-2.0, 2.0)
-        self.current_humidity = max(0, min(100, self.current_humidity))
-        
+        self._reading_count += 1
+        unsafe   = self._is_unsafe_phase()
+        cycle_num = (self._reading_count - 1) // (self.SAFE_READINGS + self.UNSAFE_READINGS)
+
+        if unsafe:
+            # Alternate: even cycles → too humid (sev 3→5), odd → too dry (sev 3)
+            if cycle_num % 2 == 0:
+                self.current_humidity = round(random.uniform(61.0, 85.0), 2)  # >60 triggers alarm
+            else:
+                self.current_humidity = round(random.uniform(10.0, 29.0), 2)  # <30 triggers alarm
+        else:
+            # Safe: 32–58%, small drift
+            drift = random.uniform(-1.0, 1.0)
+            self.current_humidity = round(max(32.0, min(58.0, self.current_humidity + drift)), 2)
+
         return HumidityReading(
             timestamp=time.time(),
             device_id=self.device_id,
-            humidity=round(self.current_humidity, 2)
+            humidity=self.current_humidity
         )
 
 
 class AccelerometerGenerator(DataGenerator):
-    """Generates realistic accelerometer data using shared motion state"""
-    
+    """
+    Vehicle accelerometer — also publishes horizontal magnitude as 'acceleration'.
+    Go threshold: |acceleration| >= 2.0 m/s² → alarm. >=2.5 → sev4, >=3.0 → sev5.
+    Cycles: 5 safe readings (|accel| < 1.5 m/s²) then 5 unsafe (2.5–4.5 m/s²).
+    """
+    SAFE_READINGS   = 5
+    UNSAFE_READINGS = 5
+
     def __init__(self, device_id: str, motion_state: Optional[MotionState] = None):
         super().__init__(device_id)
-        self.motion_state = motion_state if motion_state else MotionState()
-    
+        self.motion_state   = motion_state if motion_state else MotionState()
+        self._reading_count = 0
+        self._unsafe_sign   = 1   # alternate braking / harsh acceleration events
+
+    def _is_unsafe_phase(self) -> bool:
+        cycle = self.SAFE_READINGS + self.UNSAFE_READINGS
+        return (self._reading_count % cycle) >= self.SAFE_READINGS
+
     def generate(self) -> AccelerometerReading:
-        # Get acceleration from motion state (with small noise)
+        self._reading_count += 1
+        unsafe = self._is_unsafe_phase()
+
+        if unsafe:
+            # Harsh event: magnitude 2.5–4.5 m/s², alternate direction
+            self._unsafe_sign *= -1
+            mag   = random.uniform(2.5, 4.5) * self._unsafe_sign
+            x_val = round(mag * random.uniform(0.6, 0.9), 3)
+            y_val = round(mag * random.uniform(0.1, 0.4), 3)
+        else:
+            # Normal driving: |horizontal accel| < 1.5 m/s²
+            x_val = round(self.motion_state.acceleration_x + random.uniform(-0.3, 0.3), 3)
+            y_val = round(self.motion_state.acceleration_y + random.uniform(-0.3, 0.3), 3)
+            x_val = max(-1.5, min(1.5, x_val))
+            y_val = max(-1.5, min(1.5, y_val))
+
+        z_val = round(9.81 + random.uniform(-0.1, 0.1), 3)  # gravity
         return AccelerometerReading(
             timestamp=time.time(),
             device_id=self.device_id,
-            x=round(self.motion_state.acceleration_x + random.uniform(-0.1, 0.1), 3),
-            y=round(self.motion_state.acceleration_y + random.uniform(-0.1, 0.1), 3),
-            z=round(self.motion_state.acceleration_z + 9.81 + random.uniform(-0.1, 0.1), 3)  # Include gravity
+            x=x_val,
+            y=y_val,
+            z=z_val
         )
 
 
@@ -573,93 +644,115 @@ class WindSpeedGenerator(DataGenerator):
 
 
 class SpeedGenerator(DataGenerator):
-    """Generates realistic speed data using shared motion state"""
-    
+    """
+    Vehicle speed sensor.
+    Go threshold: 80 km/h → alarm. >=90 → sev4, >=100 → sev5.
+    Cycles: 5 safe readings (20–78 km/h) then 5 unsafe (85–150 km/h).
+    Speed stored in m/s internally; SenML encoder converts to km/h or MPH.
+    """
+    SAFE_READINGS   = 5
+    UNSAFE_READINGS = 5
+
+    # Go threshold is 80 km/h → 22.22 m/s
+    SAFE_MAX_MS  = 21.5   # ~77.4 km/h
+    UNSAFE_MIN_MS = 23.7  # ~85.3 km/h  — severity 3
+    UNSAFE_HI_MS  = 41.7  # ~150 km/h   — severity 5
+
     def __init__(self, device_id: str, motion_state: Optional[MotionState] = None):
         super().__init__(device_id)
-        self.motion_state = motion_state if motion_state else MotionState()
-    
+        self.motion_state   = motion_state if motion_state else MotionState()
+        self._reading_count = 0
+        self._unsafe_speed  = self.UNSAFE_MIN_MS
+
+    def _is_unsafe_phase(self) -> bool:
+        cycle = self.SAFE_READINGS + self.UNSAFE_READINGS
+        return (self._reading_count % cycle) >= self.SAFE_READINGS
+
     def generate(self) -> SpeedReading:
+        self._reading_count += 1
+        unsafe = self._is_unsafe_phase()
+
+        if unsafe:
+            # Escalate through severity levels across the unsafe window
+            pos_in_unsafe = (self._reading_count - 1) % (self.SAFE_READINGS + self.UNSAFE_READINGS) - self.SAFE_READINGS
+            # readings 0-1 → sev3 (>80), 2-3 → sev4 (>90), 4 → sev5 (>100)
+            if pos_in_unsafe <= 1:
+                speed_ms = round(random.uniform(22.3, 25.0), 2)   # 80–90 km/h
+            elif pos_in_unsafe <= 3:
+                speed_ms = round(random.uniform(25.1, 27.7), 2)   # 90–99.7 km/h
+            else:
+                speed_ms = round(random.uniform(27.8, 41.7), 2)   # 100–150 km/h
+        else:
+            # Safe: use motion state but cap below threshold
+            speed_ms = round(min(self.motion_state.speed, self.SAFE_MAX_MS), 2)
+            if speed_ms < 1.0:
+                speed_ms = round(random.uniform(5.0, 20.0), 2)    # at least some movement
+
         return SpeedReading(
             timestamp=time.time(),
             device_id=self.device_id,
-            speed=round(self.motion_state.speed, 2),
+            speed=speed_ms,
             heading=round(self.motion_state.heading, 1)
         )
 
 
 class FuelConsumptionGenerator(DataGenerator):
-    """Generates realistic fuel consumption data based on vehicle motion"""
-    
-    def __init__(self, device_id: str, tank_capacity: float = 50.0, motion_state: Optional[MotionState] = None):
+    """
+    Vehicle fuel consumption sensor.
+    Go threshold: 12.0 L/100km → alarm. >=15.96 → sev4, >=20.04 → sev5.
+    Cycles: 5 safe readings (7–11.9 L/100km) then 5 unsafe (13–25 L/100km).
+    """
+    SAFE_READINGS   = 5
+    UNSAFE_READINGS = 5
+
+    def __init__(self, device_id: str, tank_capacity: float = 50.0,
+                 motion_state: Optional[MotionState] = None):
         super().__init__(device_id)
-        self.fuel_level = random.uniform(30, 100)  # Start with 30-100% fuel
-        self.total_consumed = 0.0
-        self.tank_capacity = tank_capacity
-        self.motion_state = motion_state if motion_state else MotionState()
-        self.base_consumption = 6.5  # Base L/100km at optimal conditions
-    
+        self.fuel_level      = random.uniform(50, 100)
+        self.total_consumed  = 0.0
+        self.tank_capacity   = tank_capacity
+        self.motion_state    = motion_state if motion_state else MotionState()
+        self._reading_count  = 0
+        self._consumption    = 8.0   # starting safe value
+
+    def _is_unsafe_phase(self) -> bool:
+        cycle = self.SAFE_READINGS + self.UNSAFE_READINGS
+        return (self._reading_count % cycle) >= self.SAFE_READINGS
+
     def generate(self) -> FuelConsumptionReading:
-        # Get current speed from motion state (m/s to km/h)
+        self._reading_count += 1
+        unsafe = self._is_unsafe_phase()
+
+        if unsafe:
+            # Escalate: sev3 (>12), sev4 (>=15.96), sev5 (>=20.04)
+            pos = (self._reading_count - 1) % (self.SAFE_READINGS + self.UNSAFE_READINGS) - self.SAFE_READINGS
+            if pos <= 1:
+                consumption_l_100km = round(random.uniform(12.1, 15.9), 2)   # sev 3
+            elif pos <= 3:
+                consumption_l_100km = round(random.uniform(16.0, 20.0), 2)   # sev 4
+            else:
+                consumption_l_100km = round(random.uniform(20.1, 25.0), 2)   # sev 5 — possible leak
+        else:
+            # Safe: 7–11.9 L/100km, smooth drift
+            drift = random.uniform(-0.5, 0.5)
+            self._consumption   = round(max(7.0, min(11.9, self._consumption + drift)), 2)
+            consumption_l_100km = self._consumption
+
+        consumption_mpg = round(235.215 / consumption_l_100km, 1)
+
+        # Update fuel level
         speed_kmh = self.motion_state.speed * 3.6
-        
-        # Calculate fuel consumption based on speed and acceleration
-        # Realistic consumption model:
-        # - Idle/very low speed: 0.8-1.5 L/h (city traffic)
-        # - Optimal speed (60-80 km/h): 6-8 L/100km
-        # - High speed (>100 km/h): 10-15 L/100km
-        # - Acceleration increases consumption
-        # - Deceleration/coasting reduces consumption
-        
-        if speed_kmh < 1.0:
-            # Idle consumption (convert to L/100km equivalent for consistency)
-            consumption_l_100km = 100.0  # Very high per 100km but actual consumption is low due to no distance
-        elif speed_kmh < 30.0:
-            # City driving - stop and go
-            consumption_l_100km = 8.0 + random.uniform(-0.5, 1.0)
-        elif speed_kmh < 60.0:
-            # Moderate speed - decent efficiency
-            consumption_l_100km = 6.5 + random.uniform(-0.3, 0.8)
-        elif speed_kmh < 90.0:
-            # Optimal speed - best efficiency
-            consumption_l_100km = self.base_consumption + random.uniform(-0.5, 0.5)
-        else:
-            # High speed - increased drag and consumption
-            drag_factor = (speed_kmh - 90.0) / 50.0  # Increases with speed
-            consumption_l_100km = 8.0 + drag_factor * 4.0 + random.uniform(-0.3, 0.8)
-        
-        # Acceleration impact (more throttle = more fuel)
-        accel_impact = abs(self.motion_state.acceleration_y) * 1.5
-        consumption_l_100km += accel_impact
-        
-        # Clamp to realistic range
-        consumption_l_100km = max(4.0, min(20.0, consumption_l_100km))
-        
-        # Convert L/100km to MPG (US gallons)
-        # Formula: MPG = 235.215 / (L/100km)
-        consumption_mpg = 235.215 / consumption_l_100km
-        
-        # Calculate actual fuel consumed since last reading (5 second intervals)
-        interval_hours = 5.0 / 3600.0  # 5 seconds in hours
-        distance_km = speed_kmh * interval_hours  # actual distance traveled
-        
-        # Fuel consumed this interval
-        if distance_km > 0:
-            consumed_this_interval = (consumption_l_100km / 100.0) * distance_km
-        else:
-            # Idle consumption: ~0.8 L/h
-            consumed_this_interval = 0.8 * interval_hours
-        
-        # Update total and fuel level
-        self.total_consumed += consumed_this_interval
-        fuel_level_decrease = (consumed_this_interval / self.tank_capacity) * 100
-        self.fuel_level = max(0, self.fuel_level - fuel_level_decrease)
-        
+        interval_hours = 5.0 / 3600.0
+        distance_km = speed_kmh * interval_hours
+        consumed = (consumption_l_100km / 100.0) * distance_km if distance_km > 0 else 0.8 * interval_hours
+        self.total_consumed += consumed
+        self.fuel_level = max(0.0, self.fuel_level - (consumed / self.tank_capacity) * 100)
+
         return FuelConsumptionReading(
             timestamp=time.time(),
             device_id=self.device_id,
-            consumption_l_100km=round(consumption_l_100km, 2),
-            consumption_mpg=round(consumption_mpg, 1),
+            consumption_l_100km=consumption_l_100km,
+            consumption_mpg=consumption_mpg,
             fuel_level=round(self.fuel_level, 1),
             total_consumed=round(self.total_consumed, 3)
         )

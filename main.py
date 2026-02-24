@@ -169,10 +169,13 @@ class SenMLEncoder:
                 {"n": "humidity", "bu": "%RH", "u": "%RH", "bt": base_time, "v": reading.humidity}
             ]
         elif isinstance(reading, AccelerometerReading):
+            # Horizontal acceleration magnitude (x,y only; z includes gravity)
+            accel_magnitude = round((reading.x ** 2 + reading.y ** 2) ** 0.5, 3)
             senml_pack = [
                 {"n": "accel_x", "bu": "m/s2", "u": "m/s2", "bt": base_time, "v": reading.x},
                 {"n": "accel_y", "u": "m/s2", "v": reading.y},
-                {"n": "accel_z", "u": "m/s2", "v": reading.z}
+                {"n": "accel_z", "u": "m/s2", "v": reading.z},
+                {"n": "acceleration", "u": "m/s2", "v": accel_magnitude},
             ]
         elif isinstance(reading, GyroscopeReading):
             senml_pack = [
