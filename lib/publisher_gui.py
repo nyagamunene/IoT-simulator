@@ -4,8 +4,10 @@ Contains the graphical user interface with matplotlib charts and animations
 """
 
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, filedialog
+from tkinter import ttk, scrolledtext, messagebox, filedialog, simpledialog
 import queue
+import subprocess
+import sys
 from typing import Dict, Any
 import re
 from collections import deque
@@ -214,16 +216,24 @@ class SensorDataChart(ttk.Frame):
 
 class SimulatorGUI:
     """GUI for IoT Device Simulator"""
-    
-    CONFIG_FILE = Path.home() / ".iot_simulator_config.json"
-    
+
+    DEFAULT_CONFIG_FILE = Path.home() / ".iot_simulator_config.json"
+
     def __init__(self, root, simulator_class):
         self.root = root
-        self.root.title("IoT Device Simulator - Publisher")
+        # Main window is implicitly Device 001; spawned windows pass IOT_SIM_TITLE_SUFFIX
+        title_suffix = os.environ.get("IOT_SIM_TITLE_SUFFIX", "Device 001").strip()
+        self.root.title(f"IoT Device Simulator - Publisher{(' — ' + title_suffix) if title_suffix else ''}")
         self.root.geometry("1200x800")
-        
+
+        # Each window keeps its own config file so multiple devices don't fight over state.
+        # IOT_SIM_CONFIG is set on spawned device windows; the original window uses the default.
+        custom_cfg = os.environ.get("IOT_SIM_CONFIG", "").strip()
+        self.CONFIG_FILE = Path(custom_cfg) if custom_cfg else self.DEFAULT_CONFIG_FILE
+
         self.simulator_class = simulator_class
-        self.simulator = None
+        self.simulators = []           # one entry per simulated device
+        self.simulator = None          # alias to simulators[0] for legacy code paths
         self.log_update_job = None
         self.message_count = 0
         
@@ -328,21 +338,24 @@ class SimulatorGUI:
         ttk.Label(config_frame, text="Interval (sec):").grid(row=0, column=2, sticky=tk.W, padx=(20, 0), pady=2)
         self.interval_var = tk.StringVar(value="5")
         ttk.Entry(config_frame, textvariable=self.interval_var, width=10).grid(row=0, column=3, sticky=tk.W, pady=2)
-        
-        # Authentication (for all protocols)
-        ttk.Label(config_frame, text="Username:").grid(row=1, column=0, sticky=tk.W, pady=2)
+
+        # Spawn additional publisher windows — each is a fully independent device
+        # with its own credentials, topic, and config file.
+        ttk.Button(config_frame, text="➕ Open Device Windows…",
+                   command=self._open_device_windows).grid(
+            row=1, column=2, columnspan=2, sticky=tk.W, padx=(20, 0), pady=2)
+
+        # Auth credentials live in the "Magistrala Client" section under Protocol Configuration.
+        # StringVars are created here so they exist before that section is built.
         self.username_var = tk.StringVar(value="")
-        ttk.Entry(config_frame, textvariable=self.username_var, width=30).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2)
-        
-        ttk.Label(config_frame, text="Password:").grid(row=1, column=2, sticky=tk.W, padx=(20, 0), pady=2)
         self.password_var = tk.StringVar(value="")
-        ttk.Entry(config_frame, textvariable=self.password_var, width=10, show="*").grid(row=1, column=3, sticky=tk.W, pady=2)
-        
+        self.mqtt_client_name_var = tk.StringVar(value="")
+
         # Unit System Selection
-        ttk.Label(config_frame, text="Unit System:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Label(config_frame, text="Unit System:").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.unit_system_var = tk.StringVar(value="metric")
         unit_frame = ttk.Frame(config_frame)
-        unit_frame.grid(row=2, column=1, sticky=tk.W, pady=2)
+        unit_frame.grid(row=1, column=1, sticky=tk.W, pady=2)
         ttk.Radiobutton(unit_frame, text="Metric (°C, km/h, L/100km)", variable=self.unit_system_var, 
                        value="metric").pack(side=tk.LEFT, padx=(0, 10))
         ttk.Radiobutton(unit_frame, text="Imperial (°F, mph, MPG)", variable=self.unit_system_var, 
@@ -470,10 +483,69 @@ class SimulatorGUI:
         # Initially show TLS cert frame (TLS is default) and hide client cert fields
         self.tls_cert_frame.grid()
         self._hide_client_cert_fields()
-        
+
+        # Magistrala Client identity (used across MQTT/HTTP/WS/CoAP auth)
+        client_frame = ttk.LabelFrame(protocol_frame, text="Magistrala Client", padding="5")
+        client_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
+
+        ttk.Label(client_frame, text="Client ID:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(client_frame, textvariable=self.username_var, width=36).grid(
+            row=0, column=1, sticky=(tk.W, tk.E), pady=2, padx=(0, 2))
+        ttk.Label(client_frame, text="(mosquitto_pub -u)",
+                  font=('TkDefaultFont', 8)).grid(row=0, column=2, sticky=tk.W)
+
+        ttk.Label(client_frame, text="Client Secret:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        secret_row = ttk.Frame(client_frame)
+        secret_row.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2, padx=(0, 2))
+        self.password_entry = ttk.Entry(secret_row, textvariable=self.password_var,
+                                        width=32, show="*")
+        self.password_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._secret_visible = False
+        self.secret_toggle_btn = ttk.Button(secret_row, text="👁", width=3,
+                                            command=self._toggle_secret_visibility)
+        self.secret_toggle_btn.pack(side=tk.LEFT, padx=(2, 0))
+        ttk.Label(client_frame, text="(mosquitto_pub -P)",
+                  font=('TkDefaultFont', 8)).grid(row=1, column=2, sticky=tk.W)
+
+        ttk.Label(client_frame, text="Client Name:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(client_frame, textvariable=self.mqtt_client_name_var, width=36).grid(
+            row=2, column=1, sticky=(tk.W, tk.E), pady=2, padx=(0, 2))
+        ttk.Label(client_frame, text="(MQTT -I; defaults to Device ID)",
+                  font=('TkDefaultFont', 8)).grid(row=2, column=2, sticky=tk.W)
+
+        # Magistrala Routing (composes the publish topic: m/<domain>/c/<channel>/<subtopic>)
+        routing_frame = ttk.LabelFrame(protocol_frame, text="Magistrala Routing", padding="5")
+        routing_frame.grid(row=5, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
+
+        ttk.Label(routing_frame, text="Domain ID:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.magistrala_domain_var = tk.StringVar(value="")
+        ttk.Entry(routing_frame, textvariable=self.magistrala_domain_var, width=36).grid(
+            row=0, column=1, sticky=(tk.W, tk.E), pady=2, padx=(0, 2))
+
+        ttk.Label(routing_frame, text="Channel ID:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.magistrala_channel_var = tk.StringVar(value="")
+        ttk.Entry(routing_frame, textvariable=self.magistrala_channel_var, width=36).grid(
+            row=1, column=1, sticky=(tk.W, tk.E), pady=2, padx=(0, 2))
+
+        ttk.Label(routing_frame, text="Subtopic:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.magistrala_subtopic_var = tk.StringVar(value="")
+        ttk.Entry(routing_frame, textvariable=self.magistrala_subtopic_var, width=36).grid(
+            row=2, column=1, sticky=(tk.W, tk.E), pady=2, padx=(0, 2))
+
+        # Live preview of the composed topic
+        self.topic_preview_var = tk.StringVar(value=self._compose_topic())
+        ttk.Label(routing_frame, text="Topic:").grid(row=3, column=0, sticky=tk.W, pady=(4, 2))
+        ttk.Label(routing_frame, textvariable=self.topic_preview_var,
+                  font=('TkDefaultFont', 8), foreground='#0055cc').grid(
+            row=3, column=1, sticky=tk.W, pady=(4, 2))
+
+        # Keep the preview in sync with edits
+        for var in (self.magistrala_domain_var, self.magistrala_channel_var, self.magistrala_subtopic_var):
+            var.trace_add('write', lambda *_: self.topic_preview_var.set(self._compose_topic()))
+
         # Protocol-specific settings
         self.protocol_settings_frame = ttk.Frame(protocol_frame)
-        self.protocol_settings_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
+        self.protocol_settings_frame.grid(row=6, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
         
         self._create_protocol_settings()
         
@@ -558,24 +630,34 @@ class SimulatorGUI:
         chart_controls.pack(fill=tk.X, pady=5)
         ttk.Button(chart_controls, text="Clear Chart", command=self._clear_chart).pack(side=tk.LEFT, padx=5)
     
+    SENSOR_LEVELS = ("auto", "low", "medium", "high")
+    SENSOR_LEVEL_LABELS = ("Auto", "Low", "Med", "High")
+
+    # Generators that accept Auto / Low / Medium / High overrides. Sensors not in
+    # this set show a disabled slider with an "Auto only" note.
+    LEVEL_CAPABLE_SENSORS = {
+        "temperature", "pressure", "humidity", "accelerometer", "co2", "flow",
+        "soil_moisture", "soil_ph", "light", "rain", "wind", "speed", "fuel",
+        "water_meter", "water_ph", "water_turbidity", "water_tds", "chlorine",
+    }
+
     def _create_sensor_config_tab(self, parent):
         """Create sensor configuration tab"""
         main_frame = ttk.Frame(parent, padding="20")
         main_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         # Motion Configuration
         motion_frame = ttk.LabelFrame(main_frame, text="Motion Configuration", padding="15")
-        motion_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Motion Mode Selection
+        motion_frame.pack(fill=tk.X, pady=(0, 10))
+
         motion_label = ttk.Label(motion_frame, text="Motion Mode:", font=('TkDefaultFont', 10, 'bold'))
         motion_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
-        
-        description = ttk.Label(motion_frame, 
+
+        description = ttk.Label(motion_frame,
                                text="Select the motion profile for location-based sensors (GPS, Speed, Accelerometer, Fuel):",
                                font=('TkDefaultFont', 9))
         description.grid(row=1, column=0, sticky=tk.W, pady=(0, 15))
-        
+
         self.motion_mode_var = tk.StringVar(value="low_speed")
         motion_modes = [
             ("🛑 Stationary", "stationary", "No movement - vehicle is parked"),
@@ -583,12 +665,121 @@ class SimulatorGUI:
             ("🚙 Medium Speed (36-108 km/h)", "medium_speed", "City traffic, suburban roads"),
             ("🏎️ High Speed (108-250 km/h)", "high_speed", "Highway, motorway driving")
         ]
-        
+
         for idx, (label, mode, desc) in enumerate(motion_modes):
             rb = ttk.Radiobutton(motion_frame, text=label, variable=self.motion_mode_var, value=mode)
             rb.grid(row=idx+2, column=0, sticky=tk.W, pady=5, padx=10)
             desc_label = ttk.Label(motion_frame, text=desc, font=('TkDefaultFont', 8), foreground='gray')
             desc_label.grid(row=idx+2, column=1, sticky=tk.W, pady=5, padx=(0, 10))
+
+        # Sensor Level Overrides
+        levels_frame = ttk.LabelFrame(main_frame, text="Sensor Levels", padding="15")
+        levels_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(levels_frame,
+                  text="Override the safe/unsafe cycle. Auto = built-in pattern; Low/Med/High clamp values to that band.",
+                  font=('TkDefaultFont', 9)).grid(row=0, column=0, columnspan=4, sticky=tk.W, pady=(0, 10))
+
+        # Scrollable container so 20+ sensor rows always fit
+        canvas = tk.Canvas(levels_frame, highlightthickness=0, height=360)
+        scrollbar = ttk.Scrollbar(levels_frame, orient="vertical", command=canvas.yview)
+        scrollable = ttk.Frame(canvas)
+        scrollable.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
+        levels_frame.columnconfigure(0, weight=1)
+        levels_frame.rowconfigure(1, weight=1)
+
+        def _on_levels_wheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_levels_wheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        # Header row
+        ttk.Label(scrollable, text="Sensor", font=('TkDefaultFont', 9, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, padx=(0, 20), pady=(0, 6))
+        ttk.Label(scrollable, text="Level", font=('TkDefaultFont', 9, 'bold')).grid(
+            row=0, column=1, sticky=tk.W, padx=(0, 10), pady=(0, 6))
+
+        self.sensor_level_vars = {}
+        self.sensor_level_labels = {}
+
+        sensor_labels = {
+            "location": "📍 Location (GPS)",
+            "speed": "🚗 Speed",
+            "temperature": "🌡️ Temperature",
+            "pressure": "💨 Pressure",
+            "humidity": "💧 Humidity",
+            "accelerometer": "📊 Accelerometer",
+            "gyroscope": "🔄 Gyroscope",
+            "co2": "🌫️ CO2 (PPM)",
+            "flow": "🚰 Flow Rate",
+            "soil_moisture": "🌱 Soil Moisture",
+            "soil_ph": "🧪 Soil pH",
+            "light": "💡 Light Intensity",
+            "rain": "🌧️ Rain",
+            "wind": "💨 Wind Speed",
+            "fuel": "⛽ Fuel Consumption",
+            "water_meter": "💧 Water Meter",
+            "water_ph": "🧪 Water pH",
+            "water_turbidity": "🌊 Water Turbidity",
+            "water_tds": "⚗️ Water TDS / Cond.",
+            "chlorine": "🔬 Chlorine",
+        }
+
+        for row_idx, (key, label) in enumerate(sensor_labels.items(), start=1):
+            ttk.Label(scrollable, text=label).grid(
+                row=row_idx, column=0, sticky=tk.W, padx=(0, 20), pady=3)
+
+            var = tk.IntVar(value=0)
+            self.sensor_level_vars[key] = var
+
+            level_capable = key in self.LEVEL_CAPABLE_SENSORS
+            scale_state = tk.NORMAL if level_capable else tk.DISABLED
+
+            def _on_scale_change(value, k=key, v=var):
+                # Snap to nearest integer position 0..3
+                snapped = max(0, min(3, round(float(value))))
+                if v.get() != snapped:
+                    v.set(snapped)
+                self._update_level_label(k)
+
+            scale = ttk.Scale(scrollable, from_=0, to=3, orient=tk.HORIZONTAL,
+                              length=180, variable=var, command=_on_scale_change,
+                              state=scale_state)
+            scale.grid(row=row_idx, column=1, sticky=tk.W, padx=(0, 10), pady=3)
+
+            current_label = ttk.Label(scrollable,
+                                      text="Auto" if level_capable else "Auto only",
+                                      font=('TkDefaultFont', 9),
+                                      foreground='#0055cc' if level_capable else 'gray',
+                                      width=10)
+            current_label.grid(row=row_idx, column=2, sticky=tk.W, padx=(0, 10), pady=3)
+            self.sensor_level_labels[key] = current_label
+
+            # Tick marks under the slider
+            ticks_frame = ttk.Frame(scrollable)
+            ticks_frame.grid(row=row_idx, column=3, sticky=tk.W)
+            for i, t in enumerate(self.SENSOR_LEVEL_LABELS):
+                ttk.Label(ticks_frame, text=t,
+                          font=('TkDefaultFont', 7),
+                          foreground='gray').grid(row=0, column=i, padx=4)
+
+    def _update_level_label(self, key: str) -> None:
+        if key not in self.sensor_level_vars:
+            return
+        idx = max(0, min(3, self.sensor_level_vars[key].get()))
+        if key in self.LEVEL_CAPABLE_SENSORS:
+            self.sensor_level_labels[key].configure(text=self.SENSOR_LEVEL_LABELS[idx])
+
+    def _sensor_level_str(self, key: str) -> str:
+        """Return 'auto'/'low'/'medium'/'high' for the given sensor key."""
+        if key not in self.sensor_level_vars:
+            return "auto"
+        idx = max(0, min(3, self.sensor_level_vars[key].get()))
+        return self.SENSOR_LEVELS[idx]
     
     def _create_logs_tab(self, parent):
         """Create logs tab"""
@@ -613,88 +804,88 @@ class SimulatorGUI:
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(1, weight=1)
     
+    def _compose_topic(self) -> str:
+        """Build the publish topic from the Magistrala routing fields."""
+        domain = self.magistrala_domain_var.get().strip() if hasattr(self, 'magistrala_domain_var') else ''
+        channel = self.magistrala_channel_var.get().strip() if hasattr(self, 'magistrala_channel_var') else ''
+        subtopic = self.magistrala_subtopic_var.get().strip().lstrip('/') if hasattr(self, 'magistrala_subtopic_var') else ''
+        base = f"m/{domain}/c/{channel}"
+        return f"{base}/{subtopic}" if subtopic else base
+
+    @staticmethod
+    def _parse_legacy_topic(topic: str) -> Dict[str, str]:
+        """Parse an old-style 'm/<dom>/c/<chan>/<subtopic>' string into routing fields."""
+        parts = (topic or '').split('/')
+        if len(parts) >= 4 and parts[0] == 'm' and parts[2] == 'c':
+            return {
+                'domain': parts[1],
+                'channel': parts[3],
+                'subtopic': '/'.join(parts[4:]) if len(parts) > 4 else '',
+            }
+        return {'domain': '', 'channel': '', 'subtopic': ''}
+
     def _create_protocol_settings(self):
         # Clear existing widgets
         for widget in self.protocol_settings_frame.winfo_children():
             widget.destroy()
-        
+
         protocol = self.protocol_var.get()
-        
+
         # Auto-save callback for protocol-specific variables
         def save_callback(*args):
             if hasattr(self, '_save_job'):
                 self.root.after_cancel(self._save_job)
             self._save_job = self.root.after(1000, self._save_config)
-        
+
         if protocol == "MQTT":
             ttk.Label(self.protocol_settings_frame, text="Broker:").grid(row=0, column=0, sticky=tk.W, pady=2)
             self.mqtt_broker_var = tk.StringVar(value="messaging.magistrala.absmach.eu")
             self.mqtt_broker_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.mqtt_broker_var, width=20).grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
-            
+
             ttk.Label(self.protocol_settings_frame, text="Port:").grid(row=1, column=0, sticky=tk.W, pady=2)
             self.mqtt_port_var = tk.StringVar(value="8883")
             self.mqtt_port_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.mqtt_port_var, width=20).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2)
-            
-            ttk.Label(self.protocol_settings_frame, text="Topic:").grid(row=2, column=0, sticky=tk.W, pady=2)
-            self.mqtt_topic_var = tk.StringVar(value="m/{{DOMAINID}}/c/{{CHANNELID}}/subtopic")
-            self.mqtt_topic_var.trace_add('write', save_callback)
-            ttk.Entry(self.protocol_settings_frame, textvariable=self.mqtt_topic_var, width=20).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=2)
-        
+
         elif protocol == "HTTP":
             ttk.Label(self.protocol_settings_frame, text="Host:").grid(row=0, column=0, sticky=tk.W, pady=2)
             self.http_host_var = tk.StringVar(value="messaging.magistrala.absmach.eu")
             self.http_host_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.http_host_var, width=30).grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
-            
+
             ttk.Label(self.protocol_settings_frame, text="Port:").grid(row=1, column=0, sticky=tk.W, pady=2)
             self.http_port_var = tk.StringVar(value="8443")
             self.http_port_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.http_port_var, width=30).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2)
-            
-            ttk.Label(self.protocol_settings_frame, text="Topic/Path:").grid(row=2, column=0, sticky=tk.W, pady=2)
-            self.http_topic_var = tk.StringVar(value="m/{{DOMAINID}}/c/{{CHANNELID}}/subtopic")
-            self.http_topic_var.trace_add('write', save_callback)
-            ttk.Entry(self.protocol_settings_frame, textvariable=self.http_topic_var, width=30).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=2)
-            
-            ttk.Label(self.protocol_settings_frame, text="Method:").grid(row=3, column=0, sticky=tk.W, pady=2)
+
+            ttk.Label(self.protocol_settings_frame, text="Method:").grid(row=2, column=0, sticky=tk.W, pady=2)
             self.http_method_var = tk.StringVar(value="POST")
             self.http_method_var.trace_add('write', save_callback)
-            ttk.Combobox(self.protocol_settings_frame, textvariable=self.http_method_var, 
-                        values=["POST", "PUT"], state="readonly", width=27).grid(row=3, column=1, sticky=(tk.W, tk.E), pady=2)
-        
+            ttk.Combobox(self.protocol_settings_frame, textvariable=self.http_method_var,
+                        values=["POST", "PUT"], state="readonly", width=27).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=2)
+
         elif protocol == "WebSocket":
             ttk.Label(self.protocol_settings_frame, text="Host:").grid(row=0, column=0, sticky=tk.W, pady=2)
             self.ws_host_var = tk.StringVar(value="messaging.magistrala.absmach.eu")
             self.ws_host_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.ws_host_var, width=30).grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
-            
+
             ttk.Label(self.protocol_settings_frame, text="Port:").grid(row=1, column=0, sticky=tk.W, pady=2)
             self.ws_port_var = tk.StringVar(value="8443")
             self.ws_port_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.ws_port_var, width=30).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2)
-            
-            ttk.Label(self.protocol_settings_frame, text="Topic/Path:").grid(row=2, column=0, sticky=tk.W, pady=2)
-            self.ws_topic_var = tk.StringVar(value="m/{{DOMAINID}}/c/{{CHANNELID}}/subtopic")
-            self.ws_topic_var.trace_add('write', save_callback)
-            ttk.Entry(self.protocol_settings_frame, textvariable=self.ws_topic_var, width=30).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=2)
-        
+
         elif protocol == "CoAP":
             ttk.Label(self.protocol_settings_frame, text="Host:").grid(row=0, column=0, sticky=tk.W, pady=2)
             self.coap_host_var = tk.StringVar(value="messaging.magistrala.absmach.eu")
             self.coap_host_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.coap_host_var, width=30).grid(row=0, column=1, sticky=(tk.W, tk.E), pady=2)
-            
+
             ttk.Label(self.protocol_settings_frame, text="Port:").grid(row=1, column=0, sticky=tk.W, pady=2)
             self.coap_port_var = tk.StringVar(value="5683")
             self.coap_port_var.trace_add('write', save_callback)
             ttk.Entry(self.protocol_settings_frame, textvariable=self.coap_port_var, width=30).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=2)
-            
-            ttk.Label(self.protocol_settings_frame, text="Topic/Path:").grid(row=2, column=0, sticky=tk.W, pady=2)
-            self.coap_topic_var = tk.StringVar(value="m/{{DOMAINID}}/c/{{CHANNELID}}/subtopic")
-            self.coap_topic_var.trace_add('write', save_callback)
-            ttk.Entry(self.protocol_settings_frame, textvariable=self.coap_topic_var, width=30).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=2)
     
     def _on_protocol_change(self, event=None):
         self._create_protocol_settings()
@@ -703,7 +894,7 @@ class SimulatorGUI:
     def _on_tls_mode_change(self):
         """Handle TLS mode selection changes"""
         tls_mode = self.tls_mode_var.get()
-        
+
         if tls_mode == "none":
             # Hide all certificate fields
             self.tls_cert_frame.grid_remove()
@@ -715,10 +906,28 @@ class SimulatorGUI:
             # Show all certificate fields (CA cert, client cert, and client key)
             self.tls_cert_frame.grid()
             self._show_client_cert_fields()
-        
+
+        # Auto-switch MQTT port to match TLS mode: 1888 plain (Magistrala cloud),
+        # 8883 TLS/mTLS. Only swaps when current port is a recognized default for
+        # the *other* mode — custom ports are left alone.
+        if hasattr(self, 'mqtt_port_var'):
+            current = self.mqtt_port_var.get().strip()
+            plain_defaults = {"1883", "1888"}
+            tls_defaults = {"8883"}
+            if tls_mode == "none" and current in tls_defaults:
+                self.mqtt_port_var.set("1888")
+            elif tls_mode in ("tls", "mtls") and current in plain_defaults:
+                self.mqtt_port_var.set("8883")
+
         # Save config when TLS mode changes
         self._save_config()
     
+    def _toggle_secret_visibility(self):
+        """Reveal / re-mask the Client Secret field."""
+        self._secret_visible = not self._secret_visible
+        self.password_entry.configure(show="" if self._secret_visible else "*")
+        self.secret_toggle_btn.configure(text="🙈" if self._secret_visible else "👁")
+
     def _hide_client_cert_fields(self):
         """Hide client certificate and key fields (for TLS mode)"""
         self.client_cert_label.grid_remove()
@@ -750,134 +959,172 @@ class SimulatorGUI:
         if filename:
             var.set(filename)
     
+    def _build_simulator(self, device_id: str, motion_mode: str):
+        """Instantiate one simulator + its generators + per-sensor levels."""
+        sim = self.simulator_class(device_id)
+        motion_state = MotionState(mode=motion_mode)
+
+        ctors = {
+            'location':        lambda: LocationGenerator(device_id, motion_state=motion_state),
+            'speed':           lambda: SpeedGenerator(device_id, motion_state=motion_state),
+            'temperature':     lambda: TemperatureGenerator(device_id),
+            'pressure':        lambda: PressureGenerator(device_id),
+            'humidity':        lambda: HumidityGenerator(device_id),
+            'accelerometer':   lambda: AccelerometerGenerator(device_id, motion_state=motion_state),
+            'gyroscope':       lambda: GyroscopeGenerator(device_id),
+            'co2':             lambda: CO2Generator(device_id),
+            'flow':            lambda: FlowGenerator(device_id),
+            'soil_moisture':   lambda: SoilMoistureGenerator(device_id),
+            'soil_ph':         lambda: SoilPHGenerator(device_id),
+            'light':           lambda: LightIntensityGenerator(device_id),
+            'rain':            lambda: RainGenerator(device_id),
+            'wind':            lambda: WindSpeedGenerator(device_id),
+            'fuel':            lambda: FuelConsumptionGenerator(device_id, motion_state=motion_state),
+            'water_meter':     lambda: WaterMeterGenerator(device_id),
+            'water_ph':        lambda: WaterPHGenerator(device_id),
+            'water_turbidity': lambda: WaterTurbidityGenerator(device_id),
+            'water_tds':       lambda: WaterTDSGenerator(device_id),
+            'chlorine':        lambda: ChlorineGenerator(device_id),
+        }
+        for key, make in ctors.items():
+            if self.sensor_vars[key].get():
+                sim.add_generator(key, make())
+
+        # Apply per-sensor level overrides from the Sensor Config tab.
+        if hasattr(self, 'sensor_level_vars'):
+            for name, gen in sim.generators.items():
+                if hasattr(gen, 'set_level'):
+                    gen.set_level(self._sensor_level_str(name))
+
+        return sim
+
+    def _open_device_windows(self):
+        """Ask how many additional publisher windows to spawn, then launch them.
+
+        Each spawned window is an independent process with its own config file —
+        so users can plug in different Magistrala client credentials per device.
+        """
+        count = simpledialog.askinteger(
+            "Open Device Windows",
+            "How many additional device windows do you want to open?\n"
+            "Each opens an independent publisher with its own config.",
+            parent=self.root, minvalue=1, maxvalue=10, initialvalue=1,
+        )
+        if not count:
+            return
+
+        # Reuse main.py's entry point in independent processes
+        main_py = Path(__file__).resolve().parent.parent / "main.py"
+        cfg_dir = self.DEFAULT_CONFIG_FILE.parent
+        spawned = 0
+        claimed_slots = set()  # avoid re-picking the same slot before subprocess writes its file
+        for i in range(count):
+            # Main window is Device 001 — spawned windows start at 002.
+            # Skip slots already on disk and ones we just handed out in this call.
+            for n in range(2, 100):
+                candidate = cfg_dir / f".iot_simulator_config-{n:03d}.json"
+                if n not in claimed_slots and not candidate.exists():
+                    break
+            else:
+                self._log("Couldn't find a free device config slot (2-99 all in use)")
+                break
+            claimed_slots.add(n)
+
+            env = os.environ.copy()
+            env["IOT_SIM_CONFIG"] = str(candidate)
+            env["IOT_SIM_TITLE_SUFFIX"] = f"Device {n:03d}"
+            try:
+                subprocess.Popen([sys.executable, str(main_py)], env=env,
+                                 cwd=str(main_py.parent))
+                spawned += 1
+            except Exception as e:
+                self._log(f"Failed to spawn device window: {e}")
+                break
+
+        if spawned:
+            self._log(f"Opened {spawned} additional device window(s)")
+
     def _start_simulation(self):
         try:
-            # Create simulator
-            device_id = self.device_id_var.get()
-            self.simulator = self.simulator_class(device_id)
-            
-            # Create shared motion state for coordinated sensors (GPS, speed, accelerometer)
-            motion_mode = self.motion_mode_var.get()
-            motion_state = MotionState(mode=motion_mode)
-            
-            # Add selected sensors
-            if self.sensor_vars['location'].get():
-                self.simulator.add_generator('location', LocationGenerator(device_id, motion_state=motion_state))
-            if self.sensor_vars['speed'].get():
-                self.simulator.add_generator('speed', SpeedGenerator(device_id, motion_state=motion_state))
-            if self.sensor_vars['temperature'].get():
-                self.simulator.add_generator('temperature', TemperatureGenerator(device_id))
-            if self.sensor_vars['pressure'].get():
-                self.simulator.add_generator('pressure', PressureGenerator(device_id))
-            if self.sensor_vars['humidity'].get():
-                self.simulator.add_generator('humidity', HumidityGenerator(device_id))
-            if self.sensor_vars['accelerometer'].get():
-                self.simulator.add_generator('accelerometer', AccelerometerGenerator(device_id, motion_state=motion_state))
-            if self.sensor_vars['gyroscope'].get():
-                self.simulator.add_generator('gyroscope', GyroscopeGenerator(device_id))
-            if self.sensor_vars['co2'].get():
-                self.simulator.add_generator('co2', CO2Generator(device_id))
-            if self.sensor_vars['flow'].get():
-                self.simulator.add_generator('flow', FlowGenerator(device_id))
-            if self.sensor_vars['soil_moisture'].get():
-                self.simulator.add_generator('soil_moisture', SoilMoistureGenerator(device_id))
-            if self.sensor_vars['soil_ph'].get():
-                self.simulator.add_generator('soil_ph', SoilPHGenerator(device_id))
-            if self.sensor_vars['light'].get():
-                self.simulator.add_generator('light', LightIntensityGenerator(device_id))
-            if self.sensor_vars['rain'].get():
-                self.simulator.add_generator('rain', RainGenerator(device_id))
-            if self.sensor_vars['wind'].get():
-                self.simulator.add_generator('wind', WindSpeedGenerator(device_id))
-            if self.sensor_vars['fuel'].get():
-                self.simulator.add_generator('fuel', FuelConsumptionGenerator(device_id, motion_state=motion_state))
-            if self.sensor_vars['water_meter'].get():
-                self.simulator.add_generator('water_meter', WaterMeterGenerator(device_id))
-            if self.sensor_vars['water_ph'].get():
-                self.simulator.add_generator('water_ph', WaterPHGenerator(device_id))
-            if self.sensor_vars['water_turbidity'].get():
-                self.simulator.add_generator('water_turbidity', WaterTurbidityGenerator(device_id))
-            if self.sensor_vars['water_tds'].get():
-                self.simulator.add_generator('water_tds', WaterTDSGenerator(device_id))
-            if self.sensor_vars['chlorine'].get():
-                self.simulator.add_generator('chlorine', ChlorineGenerator(device_id))
-            
             if not any(var.get() for var in self.sensor_vars.values()):
                 messagebox.showerror("Error", "Please select at least one sensor")
                 return
-            
-            # Set protocol
+
+            device_id = self.device_id_var.get().strip() or "device"
+            motion_mode = self.motion_mode_var.get()
             protocol = self.protocol_var.get()
             config = self._get_protocol_config()
-            
-            # Log detailed configuration
+            fmt = self.format_var.get()
+            unit_system = self.unit_system_var.get()
+            interval = float(self.interval_var.get())
+
             self._log("="*60)
-            self._log(f"Starting simulation with {protocol} protocol")
-            self._log(f"Format: {self.format_var.get()}")
-            self._log(f"Device ID: {device_id}")
-            self._log(f"Interval: {self.interval_var.get()}s")
-            self._log("-"*60)
-            
+            self._log(f"Starting simulation — device: {device_id}")
+            self._log(f"Protocol: {protocol}, Format: {fmt}, Interval: {interval}s")
+            self._log(f"TLS Mode: {config.get('tls_mode', 'none')}")
             if protocol == "MQTT":
                 self._log(f"MQTT Broker: {config.get('broker')}:{config.get('port')}")
                 self._log(f"MQTT Topic: {config.get('topic')}")
                 self._log(f"Client ID: {config.get('client_id')}")
                 self._log(f"Username: {config.get('username', 'None')}")
-                self._log(f"TLS Mode: {config.get('tls_mode', 'none')}")
             elif protocol == "HTTP":
                 self._log(f"HTTP URL: {config.get('url')}")
                 self._log(f"Method: {config.get('method')}")
-                self._log(f"Auth Header: {'Set' if config.get('auth_header') else 'None'}")
             elif protocol == "WebSocket":
                 self._log(f"WebSocket URL: {config.get('url')}")
             elif protocol == "CoAP":
                 self._log(f"CoAP URL: {config.get('url')}")
-                self._log(f"Auth: {'Set' if config.get('auth') else 'None'}")
-            
             self._log("-"*60)
             self._log("Attempting to connect...")
-            
-            self.simulator.set_protocol(protocol, config)
-            
-            # Set format
-            self.simulator.set_format(self.format_var.get())
-            
-            # Set unit system
-            self.simulator.set_unit_system(self.unit_system_var.get())
-            
-            # Set interval
-            self.simulator.interval = float(self.interval_var.get())
-            
-            # Start simulator
-            self.simulator.start()
-            
+
+            # Stop any leftover simulators from a previous run before re-arming.
+            for prev in self.simulators:
+                try:
+                    prev.stop()
+                except Exception:
+                    pass
+            self.simulators = []
+
+            sim = self._build_simulator(device_id, motion_mode)
+            sim.set_protocol(protocol, config)
+            sim.set_format(fmt)
+            sim.set_unit_system(unit_system)
+            sim.interval = interval
+            sim.start()
+
+            self.simulators.append(sim)
+            self.simulator = sim
+
             # Update UI
             self.start_btn.config(state=tk.DISABLED)
             self.stop_btn.config(state=tk.NORMAL)
-            self.status_var.set(f"Status: Running ({protocol} - {self.format_var.get()})")
-            
+            self.status_var.set(f"Status: Running ({protocol} - {fmt})")
+
             # Update dashboard
             self.status_led.set_status('connecting')
             self.connection_label.set("Connecting...")
-            self.proto_display_var.set(f"{protocol} / {self.format_var.get()}")
-            
-            # Set to connected after a brief delay
+            self.proto_display_var.set(f"{protocol} / {fmt}")
+
             self.root.after(1000, lambda: self.status_led.set_status('connected'))
             self.root.after(1000, lambda: self.connection_label.set("Connected"))
-            
+
             self._log("✓ Simulation started successfully")
             self._log("="*60)
             self._update_log()
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start simulation: {e}")
             self._log(f"Error: {e}")
     
     def _stop_simulation(self):
-        if self.simulator:
-            self.simulator.stop()
-            self.simulator = None
-        
+        for sim in self.simulators:
+            try:
+                sim.stop()
+            except Exception as e:
+                self._log(f"Error stopping device {sim.device_id}: {e}")
+        self.simulators = []
+        self.simulator = None
+
         if self.log_update_job:
             self.root.after_cancel(self.log_update_job)
             self.log_update_job = None
@@ -903,59 +1150,57 @@ class SimulatorGUI:
         # Base config for each protocol  
         config = {}
         
+        # Topic comes from the shared Magistrala routing fields
+        topic = self._compose_topic()
+
         if protocol == "MQTT":
+            client_name = self.mqtt_client_name_var.get().strip() if hasattr(self, 'mqtt_client_name_var') else ''
             config = {
                 'broker': self.mqtt_broker_var.get(),
                 'port': int(self.mqtt_port_var.get()),
-                'topic': self.mqtt_topic_var.get(),
-                'client_id': self.device_id_var.get()
+                'topic': topic,
+                'client_id': client_name or self.device_id_var.get(),
             }
-            
+
             # Add username and password for MQTT
             if username:
                 config['username'] = username
             if password:
                 config['password'] = password
         elif protocol == "HTTP":
-            # Build URL from host, port, and topic
             host = self.http_host_var.get()
             port = self.http_port_var.get()
-            topic = self.http_topic_var.get()
-            
+
             # Use HTTPS for secure ports (443, 8443), HTTP for others
             protocol_scheme = 'https' if port in ['443', '8443'] else 'http'
             url = f"{protocol_scheme}://{host}:{port}/{topic.lstrip('/')}"
-            
+
             config = {
                 'url': url,
                 'method': self.http_method_var.get()
             }
-            
+
             if username and password:
                 config['auth_header'] = f"Client {password}"
         elif protocol == "WebSocket":
-            # Build URL from host, port, and topic
             host = self.ws_host_var.get()
             port = self.ws_port_var.get()
-            topic = self.ws_topic_var.get()
-            
+
             # Use WSS for secure ports (443, 8443), WS for others
             protocol_scheme = 'wss' if port in ['443', '8443'] else 'ws'
             url = f"{protocol_scheme}://{host}:{port}/{topic.lstrip('/')}"
-            
+
             # Add authorization as URL parameter for WebSocket (as per wscat example)
             if password:
                 separator = '&' if '?' in url else '?'
                 url = f"{url}{separator}authorization={password}"
-            
+
             config = {
                 'url': url
             }
         elif protocol == "CoAP":
-            # Build URL from host, port, and topic
             host = self.coap_host_var.get()
             port = self.coap_port_var.get()
-            topic = self.coap_topic_var.get()
             
             # Use COAPS for secure ports (5684), COAP for others
             protocol_scheme = 'coaps' if port == '5684' else 'coap'
@@ -998,7 +1243,7 @@ class SimulatorGUI:
                     self._log(message)
             except queue.Empty:
                 pass
-            
+
             # Schedule next update
             self.log_update_job = self.root.after(100, self._update_log)
     
@@ -1245,10 +1490,18 @@ class SimulatorGUI:
         self.client_key_var.trace_add('write', save_callback)
         self.motion_mode_var.trace_add('write', save_callback)
         self.unit_system_var.trace_add('write', save_callback)
-        
+        self.magistrala_domain_var.trace_add('write', save_callback)
+        self.magistrala_channel_var.trace_add('write', save_callback)
+        self.magistrala_subtopic_var.trace_add('write', save_callback)
+
         # Add traces to sensor checkboxes
         for var in self.sensor_vars.values():
             var.trace_add('write', save_callback)
+
+        # Auto-save when a sensor level slider moves
+        if hasattr(self, 'sensor_level_vars'):
+            for var in self.sensor_level_vars.values():
+                var.trace_add('write', save_callback)
     
     def _save_config(self):
         """Save current configuration to file"""
@@ -1266,35 +1519,39 @@ class SimulatorGUI:
                 'client_key': self.client_key_var.get(),
                 'motion_mode': self.motion_mode_var.get(),
                 'unit_system': self.unit_system_var.get(),
-                'sensors': {key: var.get() for key, var in self.sensor_vars.items()}
+                'sensors': {key: var.get() for key, var in self.sensor_vars.items()},
+                'sensor_levels': {key: self._sensor_level_str(key)
+                                  for key in (self.sensor_level_vars or {})},
+                'magistrala': {
+                    'domain': self.magistrala_domain_var.get() if hasattr(self, 'magistrala_domain_var') else '',
+                    'channel': self.magistrala_channel_var.get() if hasattr(self, 'magistrala_channel_var') else '',
+                    'subtopic': self.magistrala_subtopic_var.get() if hasattr(self, 'magistrala_subtopic_var') else '',
+                },
             }
-            
-            # Protocol-specific settings
+
+            # Protocol-specific settings (topic now lives under config['magistrala'])
             protocol = self.protocol_var.get()
             if protocol == "MQTT" and hasattr(self, 'mqtt_broker_var'):
                 config['mqtt'] = {
                     'broker': self.mqtt_broker_var.get(),
                     'port': self.mqtt_port_var.get(),
-                    'topic': self.mqtt_topic_var.get()
+                    'client_name': self.mqtt_client_name_var.get() if hasattr(self, 'mqtt_client_name_var') else '',
                 }
             elif protocol == "HTTP" and hasattr(self, 'http_host_var'):
                 config['http'] = {
                     'host': self.http_host_var.get(),
                     'port': self.http_port_var.get(),
-                    'topic': self.http_topic_var.get(),
                     'method': self.http_method_var.get()
                 }
             elif protocol == "WebSocket" and hasattr(self, 'ws_host_var'):
                 config['websocket'] = {
                     'host': self.ws_host_var.get(),
                     'port': self.ws_port_var.get(),
-                    'topic': self.ws_topic_var.get()
                 }
             elif protocol == "CoAP" and hasattr(self, 'coap_host_var'):
                 config['coap'] = {
                     'host': self.coap_host_var.get(),
                     'port': self.coap_port_var.get(),
-                    'topic': self.coap_topic_var.get()
                 }
             
             # Save to file
@@ -1346,26 +1603,48 @@ class SimulatorGUI:
                 for key, value in config['sensors'].items():
                     if key in self.sensor_vars:
                         self.sensor_vars[key].set(value)
+
+            # Restore sensor level overrides (Auto / Low / Medium / High)
+            if 'sensor_levels' in config and hasattr(self, 'sensor_level_vars'):
+                for key, level in config['sensor_levels'].items():
+                    if key in self.sensor_level_vars and level in self.SENSOR_LEVELS:
+                        self.sensor_level_vars[key].set(self.SENSOR_LEVELS.index(level))
+                        self._update_level_label(key)
             
             # Refresh protocol settings UI BEFORE restoring values
             protocol = config.get('protocol', 'MQTT')
             self._create_protocol_settings()
-            
+
+            # Restore Magistrala routing — prefer the new block, fall back to
+            # parsing a legacy per-protocol "topic" string for older saved configs.
+            routing = config.get('magistrala')
+            if routing is None:
+                legacy_topic = ''
+                for key in ('mqtt', 'http', 'websocket', 'coap'):
+                    legacy_topic = config.get(key, {}).get('topic', '') if isinstance(config.get(key), dict) else ''
+                    if legacy_topic:
+                        break
+                routing = self._parse_legacy_topic(legacy_topic)
+            if hasattr(self, 'magistrala_domain_var'):
+                self.magistrala_domain_var.set(routing.get('domain', ''))
+            if hasattr(self, 'magistrala_channel_var'):
+                self.magistrala_channel_var.set(routing.get('channel', ''))
+            if hasattr(self, 'magistrala_subtopic_var'):
+                self.magistrala_subtopic_var.set(routing.get('subtopic', ''))
+
             # Restore protocol-specific settings AFTER creating the widgets
             if protocol == "MQTT" and 'mqtt' in config:
                 if hasattr(self, 'mqtt_broker_var'):
                     self.mqtt_broker_var.set(config['mqtt'].get('broker', ''))
                 if hasattr(self, 'mqtt_port_var'):
                     self.mqtt_port_var.set(config['mqtt'].get('port', ''))
-                if hasattr(self, 'mqtt_topic_var'):
-                    self.mqtt_topic_var.set(config['mqtt'].get('topic', ''))
+                if hasattr(self, 'mqtt_client_name_var'):
+                    self.mqtt_client_name_var.set(config['mqtt'].get('client_name', ''))
             elif protocol == "HTTP" and 'http' in config:
                 if hasattr(self, 'http_host_var'):
                     self.http_host_var.set(config['http'].get('host', ''))
                 if hasattr(self, 'http_port_var'):
                     self.http_port_var.set(config['http'].get('port', ''))
-                if hasattr(self, 'http_topic_var'):
-                    self.http_topic_var.set(config['http'].get('topic', ''))
                 if hasattr(self, 'http_method_var'):
                     self.http_method_var.set(config['http'].get('method', ''))
             elif protocol == "WebSocket" and 'websocket' in config:
@@ -1373,15 +1652,11 @@ class SimulatorGUI:
                     self.ws_host_var.set(config['websocket'].get('host', ''))
                 if hasattr(self, 'ws_port_var'):
                     self.ws_port_var.set(config['websocket'].get('port', ''))
-                if hasattr(self, 'ws_topic_var'):
-                    self.ws_topic_var.set(config['websocket'].get('topic', ''))
             elif protocol == "CoAP" and 'coap' in config:
                 if hasattr(self, 'coap_host_var'):
                     self.coap_host_var.set(config['coap'].get('host', ''))
                 if hasattr(self, 'coap_port_var'):
                     self.coap_port_var.set(config['coap'].get('port', ''))
-                if hasattr(self, 'coap_topic_var'):
-                    self.coap_topic_var.set(config['coap'].get('topic', ''))
             
         except Exception as e:
             # Silently fail - use defaults if config can't be loaded
@@ -1393,7 +1668,7 @@ class SimulatorGUI:
         self._save_config()
         
         # Stop simulation if running
-        if self.simulator:
+        if self.simulators:
             self._stop_simulation()
         
         # Close window

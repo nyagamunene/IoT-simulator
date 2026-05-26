@@ -57,3 +57,4 @@ htmlcov/
 
 # Docker
 .dockerignore
+*.crt

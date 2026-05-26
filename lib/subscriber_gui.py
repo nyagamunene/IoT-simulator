@@ -78,10 +78,12 @@ class MQTTSubscriberGUI:
         self.topic_set = set()
         
         # Actuator states
+        # Topics follow Magistrala format: m/<DOMAINID>/c/<CHANNELID>/<subtopic>
+        # Replace {{DOMAINID}} and {{CHANNELID}} with actual UUIDs before connecting.
         self.actuator_states = {
-            'bulb': {'on': False, 'brightness': 0, 'topic': 'iot/actuators/bulb'},
-            'relay': {'on': False, 'topic': 'iot/actuators/relay'},
-            'thermostat': {'target_temp': 22, 'mode': 'off', 'topic': 'iot/actuators/thermostat'}
+            'bulb': {'on': False, 'brightness': 0, 'topic': 'm/{{DOMAINID}}/c/{{CHANNELID}}/actuators/bulb'},
+            'relay': {'on': False, 'topic': 'm/{{DOMAINID}}/c/{{CHANNELID}}/actuators/relay'},
+            'thermostat': {'target_temp': 22, 'mode': 'off', 'topic': 'm/{{DOMAINID}}/c/{{CHANNELID}}/actuators/thermostat'}
         }
 
         self._create_menu()

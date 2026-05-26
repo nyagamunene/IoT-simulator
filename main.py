@@ -722,8 +722,10 @@ class IoTDeviceSimulator:
             
             # Update actuators based on topic
             for name, actuator in self.actuators.items():
-                # Check if topic matches actuator (e.g., iot/actuator/bulb or iot/actuator/device_id/actuator_name)
-                if f"actuator/{name}" in topic or f"control/{name}" in topic:
+                # Matches both legacy (iot/actuator/<name>, iot/control/<name>) and
+                # Magistrala (m/<dom>/c/<chan>/actuators/<name>, .../control/<name>) shapes
+                if (f"actuators/{name}" in topic or f"actuator/{name}" in topic
+                        or f"control/{name}" in topic):
                     actuator.update_state(command)
                     self.message_queue.put(f"[{timestamp}] Updated {name}: {actuator.get_state()}")
         except Exception as e:
@@ -740,11 +742,22 @@ class IoTDeviceSimulator:
             if self.actuators:
                 subscribe_topics = config.get('subscribe_topics', [])
                 if not subscribe_topics:
-                    # Default subscription topics for actuators
-                    subscribe_topics = [
-                        f"iot/actuator/{self.device_id}/#",
-                        f"iot/control/{self.device_id}/#"
-                    ]
+                    # Derive Magistrala channel root from publish topic
+                    # (m/<dom>/c/<chan>/...) so actuator subs live on the same channel.
+                    pub_topic = config.get('topic', '')
+                    parts = pub_topic.split('/')
+                    if len(parts) >= 4 and parts[0] == 'm' and parts[2] == 'c':
+                        channel_root = '/'.join(parts[:4])
+                        subscribe_topics = [
+                            f"{channel_root}/actuators/#",
+                            f"{channel_root}/control/#",
+                        ]
+                    else:
+                        # Legacy fallback when topic is not in Magistrala shape
+                        subscribe_topics = [
+                            f"iot/actuator/{self.device_id}/#",
+                            f"iot/control/{self.device_id}/#",
+                        ]
                 config['subscribe_topics'] = subscribe_topics
             
             self.protocol_handler = MQTTHandler(config, message_callback=self._handle_mqtt_message)

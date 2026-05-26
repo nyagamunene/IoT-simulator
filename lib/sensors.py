@@ -283,11 +283,33 @@ class MotionState:
 # ==================== Data Generators ====================
 
 class DataGenerator:
-    """Base class for data generators"""
-    
+    """Base class for data generators with optional level control.
+
+    Subclasses may define ``LEVEL_BANDS`` to expose Auto / Low / Medium / High
+    presets in the GUI. When ``self.level`` is anything other than ``"auto"``
+    the generator emits values from the matching band instead of running its
+    default (typically the safe/unsafe cycle).
+    """
+
+    LEVEL_BANDS = None  # type: ignore  # subclass override: Dict[str, Tuple[float, float]]
+
     def __init__(self, device_id: str):
         self.device_id = device_id
-    
+        self.level = "auto"
+
+    def set_level(self, level: str) -> None:
+        if level in ("auto", "low", "medium", "high"):
+            self.level = level
+
+    def supports_levels(self) -> bool:
+        return self.LEVEL_BANDS is not None
+
+    def _level_band(self):
+        """Return (lo, hi) for the current non-auto level, or None."""
+        if self.level == "auto" or not self.LEVEL_BANDS:
+            return None
+        return self.LEVEL_BANDS.get(self.level)
+
     def generate(self) -> SensorReading:
         raise NotImplementedError
 
@@ -322,6 +344,7 @@ class TemperatureGenerator(DataGenerator):
     """
     SAFE_READINGS   = 5
     UNSAFE_READINGS = 5
+    LEVEL_BANDS = {"low": (-2.0, 1.9), "medium": (3.0, 7.0), "high": (12.0, 25.0)}
 
     def __init__(self, device_id: str, base_temp: float = 5.0):
         super().__init__(device_id)
@@ -333,6 +356,12 @@ class TemperatureGenerator(DataGenerator):
         return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> TemperatureReading:
+        band = self._level_band()
+        if band is not None:
+            self.current_temp = round(random.uniform(*band), 2)
+            return TemperatureReading(timestamp=time.time(), device_id=self.device_id,
+                                      temperature=self.current_temp)
+
         self._reading_count += 1
         unsafe = self._is_unsafe_phase()
         cycle_num = (self._reading_count - 1) // (self.SAFE_READINGS + self.UNSAFE_READINGS)
@@ -357,16 +386,21 @@ class TemperatureGenerator(DataGenerator):
 
 class PressureGenerator(DataGenerator):
     """Generates realistic pressure data"""
-    
+    LEVEL_BANDS = {"low": (950.0, 980.0), "medium": (1010.0, 1020.0), "high": (1030.0, 1050.0)}
+
     def __init__(self, device_id: str, base_pressure: float = 1013.25):
         super().__init__(device_id)
         self.base_pressure = base_pressure
         self.current_pressure = base_pressure
-    
+
     def generate(self) -> PressureReading:
-        # Simulate pressure fluctuation
-        self.current_pressure += random.uniform(-1.0, 1.0)
-        self.current_pressure = max(950, min(1050, self.current_pressure))
+        band = self._level_band()
+        if band is not None:
+            self.current_pressure = random.uniform(*band)
+        else:
+            # Simulate pressure fluctuation
+            self.current_pressure += random.uniform(-1.0, 1.0)
+            self.current_pressure = max(950, min(1050, self.current_pressure))
         
         return PressureReading(
             timestamp=time.time(),
@@ -383,6 +417,7 @@ class HumidityGenerator(DataGenerator):
     """
     SAFE_READINGS   = 5
     UNSAFE_READINGS = 5
+    LEVEL_BANDS = {"low": (10.0, 29.0), "medium": (32.0, 58.0), "high": (65.0, 85.0)}
 
     def __init__(self, device_id: str, base_humidity: float = 45.0):
         super().__init__(device_id)
@@ -394,6 +429,12 @@ class HumidityGenerator(DataGenerator):
         return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> HumidityReading:
+        band = self._level_band()
+        if band is not None:
+            self.current_humidity = round(random.uniform(*band), 2)
+            return HumidityReading(timestamp=time.time(), device_id=self.device_id,
+                                   humidity=self.current_humidity)
+
         self._reading_count += 1
         unsafe   = self._is_unsafe_phase()
         cycle_num = (self._reading_count - 1) // (self.SAFE_READINGS + self.UNSAFE_READINGS)
@@ -424,6 +465,7 @@ class AccelerometerGenerator(DataGenerator):
     """
     SAFE_READINGS   = 5
     UNSAFE_READINGS = 5
+    LEVEL_BANDS = {"low": (0.0, 0.5), "medium": (0.5, 1.5), "high": (2.5, 4.5)}
 
     def __init__(self, device_id: str, motion_state: Optional[MotionState] = None):
         super().__init__(device_id)
@@ -436,6 +478,16 @@ class AccelerometerGenerator(DataGenerator):
         return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> AccelerometerReading:
+        band = self._level_band()
+        if band is not None:
+            self._unsafe_sign *= -1
+            mag = random.uniform(*band) * self._unsafe_sign
+            x_val = round(mag * random.uniform(0.6, 0.9), 3)
+            y_val = round(mag * random.uniform(0.1, 0.4), 3)
+            z_val = round(9.81 + random.uniform(-0.1, 0.1), 3)
+            return AccelerometerReading(timestamp=time.time(), device_id=self.device_id,
+                                        x=x_val, y=y_val, z=z_val)
+
         self._reading_count += 1
         unsafe = self._is_unsafe_phase()
 
@@ -493,15 +545,20 @@ class GyroscopeGenerator(DataGenerator):
 
 class CO2Generator(DataGenerator):
     """Generates realistic CO2 PPM data"""
-    
+    LEVEL_BANDS = {"low": (350.0, 500.0), "medium": (600.0, 1000.0), "high": (1500.0, 3000.0)}
+
     def __init__(self, device_id: str, base_ppm: float = 400.0):
         super().__init__(device_id)
         self.current_ppm = base_ppm
-    
+
     def generate(self) -> CO2Reading:
-        # Simulate CO2 fluctuation (typical range 400-1000 ppm indoor)
-        self.current_ppm += random.uniform(-10, 15)
-        self.current_ppm = max(300, min(2000, self.current_ppm))
+        band = self._level_band()
+        if band is not None:
+            self.current_ppm = random.uniform(*band)
+        else:
+            # Simulate CO2 fluctuation (typical range 400-1000 ppm indoor)
+            self.current_ppm += random.uniform(-10, 15)
+            self.current_ppm = max(300, min(2000, self.current_ppm))
         
         return CO2Reading(
             timestamp=time.time(),
@@ -512,17 +569,22 @@ class CO2Generator(DataGenerator):
 
 class FlowGenerator(DataGenerator):
     """Generates realistic flow sensor data"""
-    
+    LEVEL_BANDS = {"low": (0.0, 2.0), "medium": (5.0, 15.0), "high": (30.0, 80.0)}
+
     def __init__(self, device_id: str, base_flow: float = 5.0):
         super().__init__(device_id)
         self.current_flow = base_flow
         self.total_volume = 0.0
         self.last_time = time.time()
-    
+
     def generate(self) -> FlowReading:
-        # Simulate flow rate changes
-        self.current_flow += random.uniform(-0.5, 0.5)
-        self.current_flow = max(0, min(20, self.current_flow))
+        band = self._level_band()
+        if band is not None:
+            self.current_flow = random.uniform(*band)
+        else:
+            # Simulate flow rate changes
+            self.current_flow += random.uniform(-0.5, 0.5)
+            self.current_flow = max(0, min(20, self.current_flow))
         
         # Calculate volume
         current_time = time.time()
@@ -540,15 +602,20 @@ class FlowGenerator(DataGenerator):
 
 class SoilMoistureGenerator(DataGenerator):
     """Generates realistic soil moisture data"""
-    
+    LEVEL_BANDS = {"low": (5.0, 20.0), "medium": (30.0, 60.0), "high": (75.0, 95.0)}
+
     def __init__(self, device_id: str, base_moisture: float = 45.0):
         super().__init__(device_id)
         self.current_moisture = base_moisture
-    
+
     def generate(self) -> SoilMoistureReading:
-        # Simulate moisture changes (typically decreases slowly)
-        self.current_moisture += random.uniform(-1.5, 0.5)
-        self.current_moisture = max(0, min(100, self.current_moisture))
+        band = self._level_band()
+        if band is not None:
+            self.current_moisture = random.uniform(*band)
+        else:
+            # Simulate moisture changes (typically decreases slowly)
+            self.current_moisture += random.uniform(-1.5, 0.5)
+            self.current_moisture = max(0, min(100, self.current_moisture))
         
         return SoilMoistureReading(
             timestamp=time.time(),
@@ -559,15 +626,20 @@ class SoilMoistureGenerator(DataGenerator):
 
 class SoilPHGenerator(DataGenerator):
     """Generates realistic soil pH data"""
-    
+    LEVEL_BANDS = {"low": (4.0, 5.5), "medium": (6.0, 7.5), "high": (8.0, 9.5)}
+
     def __init__(self, device_id: str, base_ph: float = 6.5):
         super().__init__(device_id)
         self.current_ph = base_ph
-    
+
     def generate(self) -> SoilPHReading:
-        # Simulate pH fluctuation (pH usually stable, small changes)
-        self.current_ph += random.uniform(-0.1, 0.1)
-        self.current_ph = max(4.0, min(9.0, self.current_ph))
+        band = self._level_band()
+        if band is not None:
+            self.current_ph = random.uniform(*band)
+        else:
+            # Simulate pH fluctuation (pH usually stable, small changes)
+            self.current_ph += random.uniform(-0.1, 0.1)
+            self.current_ph = max(4.0, min(9.0, self.current_ph))
         
         return SoilPHReading(
             timestamp=time.time(),
@@ -578,15 +650,20 @@ class SoilPHGenerator(DataGenerator):
 
 class LightIntensityGenerator(DataGenerator):
     """Generates realistic light intensity data"""
-    
+    LEVEL_BANDS = {"low": (0.0, 50.0), "medium": (200.0, 2000.0), "high": (20000.0, 100000.0)}
+
     def __init__(self, device_id: str, base_lux: float = 10000.0):
         super().__init__(device_id)
         self.current_lux = base_lux
-    
+
     def generate(self) -> LightIntensityReading:
-        # Simulate light intensity changes (0-100000 lux range)
-        self.current_lux += random.uniform(-1000, 1000)
-        self.current_lux = max(0, min(100000, self.current_lux))
+        band = self._level_band()
+        if band is not None:
+            self.current_lux = random.uniform(*band)
+        else:
+            # Simulate light intensity changes (0-100000 lux range)
+            self.current_lux += random.uniform(-1000, 1000)
+            self.current_lux = max(0, min(100000, self.current_lux))
         
         return LightIntensityReading(
             timestamp=time.time(),
@@ -597,18 +674,21 @@ class LightIntensityGenerator(DataGenerator):
 
 class RainGenerator(DataGenerator):
     """Generates realistic rain/precipitation data"""
-    
+    LEVEL_BANDS = {"low": (0.0, 1.0), "medium": (5.0, 15.0), "high": (30.0, 50.0)}
+
     def __init__(self, device_id: str, base_rain: float = 0.0):
         super().__init__(device_id)
         self.current_rain = base_rain
-    
+
     def generate(self) -> RainReading:
-        # Simulate rainfall (0-50 mm/h, often 0)
-        if random.random() < 0.7:  # 70% chance of no rain
+        band = self._level_band()
+        if band is not None:
+            self.current_rain = random.uniform(*band)
+        elif random.random() < 0.7:  # 70% chance of no rain
             self.current_rain = max(0, self.current_rain - random.uniform(0, 2))
         else:
             self.current_rain += random.uniform(0, 5)
-        
+
         self.current_rain = max(0, min(50, self.current_rain))
         
         return RainReading(
@@ -620,16 +700,21 @@ class RainGenerator(DataGenerator):
 
 class WindSpeedGenerator(DataGenerator):
     """Generates realistic wind speed data"""
-    
+    LEVEL_BANDS = {"low": (0.0, 3.0), "medium": (8.0, 15.0), "high": (25.0, 30.0)}
+
     def __init__(self, device_id: str, base_speed: float = 3.0):
         super().__init__(device_id)
         self.current_speed = base_speed
         self.current_direction = random.uniform(0, 360)
-    
+
     def generate(self) -> WindSpeedReading:
-        # Simulate wind speed changes
-        self.current_speed += random.uniform(-0.5, 0.5)
-        self.current_speed = max(0, min(30, self.current_speed))
+        band = self._level_band()
+        if band is not None:
+            self.current_speed = random.uniform(*band)
+        else:
+            # Simulate wind speed changes
+            self.current_speed += random.uniform(-0.5, 0.5)
+            self.current_speed = max(0, min(30, self.current_speed))
         
         # Simulate direction changes
         self.current_direction += random.uniform(-10, 10)
@@ -652,6 +737,8 @@ class SpeedGenerator(DataGenerator):
     """
     SAFE_READINGS   = 5
     UNSAFE_READINGS = 5
+    # Bands in m/s. Low ≈ urban, Medium ≈ city/suburb, High ≈ highway/over-speed
+    LEVEL_BANDS = {"low": (0.0, 8.0), "medium": (10.0, 20.0), "high": (25.0, 40.0)}
 
     # Go threshold is 80 km/h → 22.22 m/s
     SAFE_MAX_MS  = 21.5   # ~77.4 km/h
@@ -669,6 +756,12 @@ class SpeedGenerator(DataGenerator):
         return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> SpeedReading:
+        band = self._level_band()
+        if band is not None:
+            speed_ms = round(random.uniform(*band), 2)
+            return SpeedReading(timestamp=time.time(), device_id=self.device_id,
+                                speed=speed_ms, heading=round(self.motion_state.heading, 1))
+
         self._reading_count += 1
         unsafe = self._is_unsafe_phase()
 
@@ -704,6 +797,8 @@ class FuelConsumptionGenerator(DataGenerator):
     """
     SAFE_READINGS   = 5
     UNSAFE_READINGS = 5
+    # Bands in L/100km. Low = efficient/highway cruise, Medium = normal, High = leak / heavy load
+    LEVEL_BANDS = {"low": (5.0, 7.0), "medium": (8.0, 12.0), "high": (16.0, 25.0)}
 
     def __init__(self, device_id: str, tank_capacity: float = 50.0,
                  motion_state: Optional[MotionState] = None):
@@ -720,6 +815,22 @@ class FuelConsumptionGenerator(DataGenerator):
         return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> FuelConsumptionReading:
+        band = self._level_band()
+        if band is not None:
+            consumption_l_100km = round(random.uniform(*band), 2)
+            consumption_mpg = round(235.215 / consumption_l_100km, 1)
+            # Still update fuel level + total to keep readings coherent
+            speed_kmh = self.motion_state.speed * 3.6
+            interval_hours = 5.0 / 3600.0
+            distance_km = speed_kmh * interval_hours
+            consumed = (consumption_l_100km / 100.0) * distance_km if distance_km > 0 else 0.8 * interval_hours
+            self.total_consumed += consumed
+            self.fuel_level = max(0.0, self.fuel_level - (consumed / self.tank_capacity) * 100)
+            return FuelConsumptionReading(
+                timestamp=time.time(), device_id=self.device_id,
+                consumption_l_100km=consumption_l_100km, consumption_mpg=consumption_mpg,
+                fuel_level=round(self.fuel_level, 1), total_consumed=round(self.total_consumed, 3))
+
         self._reading_count += 1
         unsafe = self._is_unsafe_phase()
 
@@ -766,6 +877,7 @@ class WaterMeterGenerator(DataGenerator):
     # Unsafe threshold from Go script: flow_rate >= 50.0 L/min = burst pipe
     SAFE_READINGS   = 5
     UNSAFE_READINGS = 5
+    LEVEL_BANDS = {"low": (0.0, 2.0), "medium": (5.0, 15.0), "high": (50.0, 80.0)}
 
     def __init__(self, device_id: str, pipe_diameter_mm: float = 25.0):
         super().__init__(device_id)
@@ -779,6 +891,19 @@ class WaterMeterGenerator(DataGenerator):
         return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> WaterMeterReading:
+        band = self._level_band()
+        if band is not None:
+            flow_rate = round(random.uniform(*band), 3)
+            leak_detected = self.level == "high"
+            self._prev_flow = flow_rate
+            interval_min = 5.0 / 60.0
+            self.cumulative_volume += (flow_rate * interval_min) / 1000.0
+            return WaterMeterReading(
+                timestamp=time.time(), device_id=self.device_id,
+                flow_rate=flow_rate,
+                cumulative_volume=round(self.cumulative_volume, 6),
+                leak_detected=leak_detected)
+
         self._reading_count += 1
         unsafe = self._is_unsafe_phase()
 
@@ -811,6 +936,7 @@ class WaterPHGenerator(DataGenerator):
 
     SAFE_READINGS   = 5
     UNSAFE_READINGS = 5
+    LEVEL_BANDS = {"low": (4.5, 6.4), "medium": (6.5, 8.5), "high": (8.6, 10.0)}
 
     def __init__(self, device_id: str, base_ph: float = 7.4):
         super().__init__(device_id)
@@ -822,6 +948,11 @@ class WaterPHGenerator(DataGenerator):
         return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> WaterPHReading:
+        band = self._level_band()
+        if band is not None:
+            self.ph = round(random.uniform(*band), 2)
+            return WaterPHReading(timestamp=time.time(), device_id=self.device_id, ph=self.ph)
+
         self._reading_count += 1
         unsafe = self._is_unsafe_phase()
 
@@ -847,6 +978,7 @@ class WaterTurbidityGenerator(DataGenerator):
 
     SAFE_READINGS   = 5
     UNSAFE_READINGS = 5
+    LEVEL_BANDS = {"low": (0.05, 1.0), "medium": (1.0, 3.9), "high": (4.0, 12.0)}
 
     def __init__(self, device_id: str):
         super().__init__(device_id)
@@ -858,6 +990,12 @@ class WaterTurbidityGenerator(DataGenerator):
         return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> WaterTurbidityReading:
+        band = self._level_band()
+        if band is not None:
+            self.turbidity = round(random.uniform(*band), 3)
+            return WaterTurbidityReading(timestamp=time.time(), device_id=self.device_id,
+                                         turbidity=self.turbidity)
+
         self._reading_count += 1
         unsafe = self._is_unsafe_phase()
 
@@ -880,6 +1018,7 @@ class WaterTDSGenerator(DataGenerator):
 
     SAFE_READINGS   = 5
     UNSAFE_READINGS = 5
+    LEVEL_BANDS = {"low": (50.0, 150.0), "medium": (200.0, 500.0), "high": (1000.0, 1800.0)}
 
     def __init__(self, device_id: str, base_tds: float = 150.0):
         super().__init__(device_id)
@@ -891,6 +1030,13 @@ class WaterTDSGenerator(DataGenerator):
         return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> WaterTDSReading:
+        band = self._level_band()
+        if band is not None:
+            self.tds = round(random.uniform(*band), 1)
+            conductivity = round(self.tds * 2.0 + random.uniform(-5, 5), 1)
+            return WaterTDSReading(timestamp=time.time(), device_id=self.device_id,
+                                   tds=self.tds, conductivity=max(0.0, conductivity))
+
         self._reading_count += 1
         unsafe = self._is_unsafe_phase()
 
@@ -916,6 +1062,7 @@ class ChlorineGenerator(DataGenerator):
 
     SAFE_READINGS   = 5
     UNSAFE_READINGS = 5
+    LEVEL_BANDS = {"low": (0.0, 0.09), "medium": (0.5, 2.0), "high": (4.0, 6.0)}
 
     def __init__(self, device_id: str, base_chlorine: float = 0.8):
         super().__init__(device_id)
@@ -927,6 +1074,12 @@ class ChlorineGenerator(DataGenerator):
         return (self._reading_count % cycle) >= self.SAFE_READINGS
 
     def generate(self) -> ChlorineReading:
+        band = self._level_band()
+        if band is not None:
+            self.chlorine = round(random.uniform(*band), 3)
+            return ChlorineReading(timestamp=time.time(), device_id=self.device_id,
+                                   chlorine=self.chlorine)
+
         self._reading_count += 1
         unsafe = self._is_unsafe_phase()
 
