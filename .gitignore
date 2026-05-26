@@ -58,3 +58,6 @@ htmlcov/
 # Docker
 .dockerignore
 *.crt
+
+# WSL/Windows alternate data stream artifacts
+*:Zone.Identifier

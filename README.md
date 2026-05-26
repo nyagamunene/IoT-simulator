@@ -78,89 +78,63 @@ Actuators subscribe to their own MQTT topics and respond to control messages, ma
 
 ## Installation
 
-### Prerequisites
-- Python 3.7 or higher
-- pip (Python package manager)
+### Quick start
 
-### Quick Start with Makefile
-
-The easiest way to get started:
+The whole project runs with a single command:
 
 ```bash
-# Install dependencies and run the publisher GUI
 make run
+```
 
-# Launch the MQTT subscriber GUI
+That's it. `make run` will:
+
+1. Create a Python virtual environment in `.venv/` if one doesn't already exist
+2. Upgrade pip inside that venv
+3. Install everything from `requirements.txt` into the venv
+4. Launch the publisher GUI
+
+Re-running `make run` after the first time just relaunches the GUI — the venv and dependencies are reused, so subsequent starts are instant.
+
+To launch the MQTT subscriber GUI in a separate window:
+
+```bash
 make subscriber
-
-# Or just install dependencies
-make install
-
-# View all available make targets
-make help
 ```
 
-**Test Infrastructure** (requires Docker):
+To wipe the venv and start over:
+
 ```bash
-# Start all test servers (MQTT, HTTP, WebSocket, CoAP)
-make servers-up
-
-# Start individual servers
-make mqtt-up    # MQTT broker only
-make http-up    # HTTP server only
-make ws-up      # WebSocket server only
-make coap-up    # CoAP server only
-
-# View logs from all servers
-make servers-logs
-
-# Stop all servers
-make servers-down
-```
-
-**Port Configuration:**
-
-All server ports are configured via [docker/.env](docker/.env). Default ports:
-- **MQTT**: 1883 (TCP), 9001 (WebSocket)
-- **HTTP**: 8080
-- **WebSocket**: 8765
-- **CoAP**: 5683
-
-To customize ports, edit `docker/.env` or create `docker/.env.local`. See [docker/PORT_CONFIG.md](docker/PORT_CONFIG.md) for details.
-
-**Cleanup:**
-```bash
-# Remove virtual environment
 make clean
 ```
 
-### Manual Installation
+### Prerequisites
+
+Most distributions have these already, but on a fresh Ubuntu/Debian box you may need:
 
 ```bash
-# Create virtual environment (optional but recommended)
-python3 -m venv .venv
-source .venv/bin/activate  # On Linux/Mac
-# or
-.venv\Scripts\activate  # On Windows
-
-# Install dependencies
-pip install -r requirements.txt
+sudo apt install -y python3-venv python3-tk
 ```
 
-Or install individually:
+- **python3-venv** — required so `make run` can create `.venv/`
+- **python3-tk** — required by the GUI (tkinter)
+
+That's all the system-level setup. Everything else (paho-mqtt, requests, ttkbootstrap, etc.) is installed automatically into the venv by `make run`.
+
+### Docker is optional
+
+Docker is **only** needed if you want to run the test brokers (MQTT/HTTP/WebSocket/CoAP) locally. For the typical Magistrala-against-cloud workflow, you can skip Docker entirely — point the GUI at your Magistrala broker (e.g. `messaging.magistrala.absmach.eu`) and start publishing.
+
+If you do want local test servers, jump to [Local test infrastructure (optional)](#local-test-infrastructure-optional).
+
+### Manual installation (without `make`)
+
+Only needed if you can't use `make` for some reason:
 
 ```bash
-# For MQTT support
-pip install paho-mqtt
-
-# For HTTP support
-pip install requests
-
-# For WebSocket support
-pip install websocket-client
-
-# For CoAP support
-pip install aiocoap
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python main.py
 ```
 
 ## Usage
@@ -346,9 +320,11 @@ URL: coap://your-server.com/api/data
 }
 ```
 
-## Testing Locally
+## Local test infrastructure (optional)
 
-### Quick Start with Docker (Recommended)
+You only need this if you want to run the test brokers locally instead of pointing at a real Magistrala (or other) broker. For most workflows, just run `make run` and connect the GUI to your existing broker.
+
+### Quick start with Docker
 
 Start **all test servers** with a single command:
 
